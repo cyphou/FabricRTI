@@ -1,0 +1,175 @@
+// ============================================================
+// Medallion Architecture — Silver & Gold Layers
+// RTI Demo: Azure Activity + Phone Telemetry
+// Inspired by: github.com/chakras/github-audit-log-analytics
+// ============================================================
+// Run these AFTER raw tables are created and data is flowing.
+// ============================================================
+
+// ============================================================
+// SILVER LAYER — Cleaned, normalized tables via update policies
+// ============================================================
+
+// --- Azure Activity Silver ---
+.create-merge table silver_AzureActivity (
+    Timestamp: datetime,
+    OperationName: string,
+    OperationCategory: string,
+    Status: string,
+    Level: string,
+    ResourceGroup: string,
+    ResourceType: string,
+    Caller: string,
+    CallerIpAddress: string,
+    CorrelationId: string,
+    Region: string
+)
+
+.create-or-alter function fn_SilverAzureActivity() {
+    AzureActivity
+    | extend
+        OperationCategory = extract(@"^([^/]+)", 1, ResourceType),
+        Timestamp = Timestamp
+    | project
+        Timestamp,
+        OperationName,
+        OperationCategory,
+        Status,
+        Level,
+        ResourceGroup,
+        ResourceType,
+        Caller,
+        CallerIpAddress,
+        CorrelationId,
+        Region
+}
+
+.alter table silver_AzureActivity policy update
+@'[{"IsEnabled":true,"Source":"AzureActivity","Query":"fn_SilverAzureActivity","IsTransactional":false,"PropagateIngestionProperties":true}]'
+
+// --- Phone Telemetry Silver ---
+.create-merge table silver_PhoneTelemetry (
+    Timestamp: datetime,
+    DeviceId: string,
+    User: string,
+    OS: string,
+    City: string,
+    Platform: string,
+    BatteryLevel: real,
+    BatteryCharging: bool,
+    BatteryStatus: string,
+    SignalStrength: int,
+    SignalQuality: string,
+    Latitude: real,
+    Longitude: real,
+    AppName: string,
+    CpuUsage: real,
+    MemoryUsageMB: int,
+    CrashCount: int,
+    NetworkType: string
+)
+
+.create-or-alter function fn_SilverPhoneTelemetry() {
+    PhoneTelemetry
+    | extend
+        Platform = case(OS startswith "iOS", "Apple", OS startswith "Android", "Android", "Unknown"),
+        BatteryStatus = case(
+            BatteryLevel < 15, "Critical",
+            BatteryLevel < 30, "Low",
+            BatteryLevel < 60, "Medium",
+            "Good"
+        ),
+        SignalQuality = case(
+            SignalStrength > -65, "Excellent",
+            SignalStrength > -75, "Good",
+            SignalStrength > -85, "Fair",
+            "Poor"
+        )
+    | project
+        Timestamp, DeviceId, User, OS, City, Platform,
+        BatteryLevel, BatteryCharging, BatteryStatus,
+        SignalStrength, SignalQuality,
+        Latitude, Longitude,
+        AppName, CpuUsage, MemoryUsageMB, CrashCount, NetworkType
+}
+
+.alter table silver_PhoneTelemetry policy update
+@'[{"IsEnabled":true,"Source":"PhoneTelemetry","Query":"fn_SilverPhoneTelemetry","IsTransactional":false,"PropagateIngestionProperties":true}]'
+
+
+// ============================================================
+// GOLD LAYER — Materialized Views for aggregated analytics
+// ============================================================
+
+// --- Azure Activity: Operations summary (deduplicated) ---
+.create materialized-view with (backfill=true) gold_AzureOperationsSummary on table silver_AzureActivity {
+    silver_AzureActivity
+    | summarize
+        EventCount = count(),
+        ErrorCount = countif(Level == "Error"),
+        LastSeen = max(Timestamp)
+        by OperationName, OperationCategory, ResourceGroup, Region
+}
+
+// --- Azure Activity: Caller summary ---
+.create materialized-view with (backfill=true) gold_AzureCallerActivity on table silver_AzureActivity {
+    silver_AzureActivity
+    | summarize
+        ActionCount = count(),
+        ErrorCount = countif(Level == "Error"),
+        LastActive = max(Timestamp),
+        DistinctOperations = dcount(OperationName)
+        by Caller, CallerIpAddress
+}
+
+// --- Phone: Device health snapshot (latest per device) ---
+.create materialized-view with (backfill=true) gold_DeviceHealth on table silver_PhoneTelemetry {
+    silver_PhoneTelemetry
+    | summarize arg_max(Timestamp, *) by DeviceId
+}
+
+// --- Phone: App crash aggregation ---
+.create materialized-view with (backfill=true) gold_AppCrashSummary on table silver_PhoneTelemetry {
+    silver_PhoneTelemetry
+    | where CrashCount > 0
+    | summarize
+        TotalCrashes = sum(CrashCount),
+        AffectedDevices = dcount(DeviceId),
+        LastCrash = max(Timestamp)
+        by AppName, Platform, City
+}
+
+// --- Phone: Network quality aggregation ---
+.create materialized-view with (backfill=true) gold_NetworkQuality on table silver_PhoneTelemetry {
+    silver_PhoneTelemetry
+    | summarize
+        AvgSignal = avg(SignalStrength),
+        Events = count()
+        by NetworkType, SignalQuality, Platform, City
+}
+
+
+// ============================================================
+// VALIDATION QUERIES — Run after setup to confirm data flow
+// ============================================================
+
+// Check raw table counts
+AzureActivity | summarize Count = count() | extend Layer = "Bronze", Table = "AzureActivity"
+| union (PhoneTelemetry | summarize Count = count() | extend Layer = "Bronze", Table = "PhoneTelemetry")
+| union (silver_AzureActivity | summarize Count = count() | extend Layer = "Silver", Table = "silver_AzureActivity")
+| union (silver_PhoneTelemetry | summarize Count = count() | extend Layer = "Silver", Table = "silver_PhoneTelemetry")
+
+// Check ingestion rate across layers
+AzureActivity
+| summarize IngestionCount = count() by bin(ingestion_time(), 5m)
+| order by ingestion_time_5m desc
+| take 10
+
+// Verify silver layer enrichment
+silver_PhoneTelemetry
+| summarize count() by BatteryStatus, Platform
+| order by count_ desc
+
+// Check materialized view health
+gold_DeviceHealth
+| project DeviceId, User, BatteryLevel, BatteryStatus, SignalQuality, NetworkType, Timestamp

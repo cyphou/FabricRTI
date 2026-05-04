@@ -1,0 +1,401 @@
+[
+  {
+    "uniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1",
+    "payload": {
+      "name": "RTI Demo Alerts",
+      "type": "kqlQueries"
+    },
+    "type": "container-v1"
+  },
+  {
+    "uniqueIdentifier": "6b2c39b6-9da6-46f4-a994-fbc805891652",
+    "payload": {
+      "name": "Phone Battery Monitor",
+      "runSettings": {
+        "executionIntervalInSeconds": 60
+      },
+      "query": {
+        "queryString": "PhoneTelemetry | where Timestamp > ago(5m) | summarize arg_max(Timestamp, *) by DeviceId | project Timestamp, DeviceId, BatteryLevel, BatteryCharging, User"
+      },
+      "eventhouseItem": {
+        "targetUniqueIdentifier": "17f79e17-d08e-4699-a366-17ca6bca1472"
+      },
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      }
+    },
+    "type": "kqlSource-v1"
+  },
+  {
+    "uniqueIdentifier": "98c61acb-5150-4ac3-b11e-fd44a41f26c5",
+    "payload": {
+      "name": "Azure Error Monitor",
+      "runSettings": {
+        "executionIntervalInSeconds": 60
+      },
+      "query": {
+        "queryString": "AzureActivity | where Timestamp > ago(10m) | where Level == 'Error' | summarize ErrorCount = count() by OperationName"
+      },
+      "eventhouseItem": {
+        "targetUniqueIdentifier": "17f79e17-d08e-4699-a366-17ca6bca1472"
+      },
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      }
+    },
+    "type": "kqlSource-v1"
+  },
+  {
+    "uniqueIdentifier": "b14bf60d-6788-4abb-9022-504f1e262a15",
+    "payload": {
+      "name": "App Crash Monitor",
+      "runSettings": {
+        "executionIntervalInSeconds": 60
+      },
+      "query": {
+        "queryString": "PhoneTelemetry | where Timestamp > ago(5m) | where CrashCount > 0 | summarize TotalCrashes = sum(CrashCount) by AppName"
+      },
+      "eventhouseItem": {
+        "targetUniqueIdentifier": "17f79e17-d08e-4699-a366-17ca6bca1472"
+      },
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      }
+    },
+    "type": "kqlSource-v1"
+  },
+  {
+    "uniqueIdentifier": "0ff3e483-95b4-4df4-a594-7ea7a2438083",
+    "payload": {
+      "name": "Signal Strength Monitor",
+      "runSettings": {
+        "executionIntervalInSeconds": 60
+      },
+      "query": {
+        "queryString": "PhoneTelemetry | where Timestamp > ago(5m) | summarize arg_max(Timestamp, *) by DeviceId | project Timestamp, DeviceId, SignalStrength, NetworkType, User"
+      },
+      "eventhouseItem": {
+        "targetUniqueIdentifier": "17f79e17-d08e-4699-a366-17ca6bca1472"
+      },
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      }
+    },
+    "type": "kqlSource-v1"
+  },
+  {
+    "uniqueIdentifier": "5c55886d-07c8-4cc7-8e8a-e72ac511d0fa",
+    "payload": {
+      "name": "Battery events",
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Event",
+        "instance": "{\"templateId\": \"SourceEvent\", \"templateVersion\": \"1.1\", \"steps\": [{\"name\": \"SourceEventStep\", \"id\": \"1183ccff-8a0c-4745-aec5-4bbb3d4bfe1a\", \"rows\": [{\"name\": \"SourceSelector\", \"kind\": \"SourceReference\", \"arguments\": [{\"name\": \"entityId\", \"type\": \"string\", \"value\": \"6b2c39b6-9da6-46f4-a994-fbc805891652\"}]}]}]}"
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "2bc95025-70e8-482b-b8ca-9d5e3864dafb",
+    "payload": {
+      "name": "Error events",
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Event",
+        "instance": "{\"templateId\": \"SourceEvent\", \"templateVersion\": \"1.1\", \"steps\": [{\"name\": \"SourceEventStep\", \"id\": \"99e85363-8a34-405e-82cf-fd26e92b3a75\", \"rows\": [{\"name\": \"SourceSelector\", \"kind\": \"SourceReference\", \"arguments\": [{\"name\": \"entityId\", \"type\": \"string\", \"value\": \"98c61acb-5150-4ac3-b11e-fd44a41f26c5\"}]}]}]}"
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "3224e1ac-7f77-4079-aba4-157d4fea949b",
+    "payload": {
+      "name": "Crash events",
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Event",
+        "instance": "{\"templateId\": \"SourceEvent\", \"templateVersion\": \"1.1\", \"steps\": [{\"name\": \"SourceEventStep\", \"id\": \"c2702b34-a576-47af-a1e5-4fbb75a03ea3\", \"rows\": [{\"name\": \"SourceSelector\", \"kind\": \"SourceReference\", \"arguments\": [{\"name\": \"entityId\", \"type\": \"string\", \"value\": \"b14bf60d-6788-4abb-9022-504f1e262a15\"}]}]}]}"
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "e05d9cc4-1097-4cec-a0b3-0c563fe21ccf",
+    "payload": {
+      "name": "Signal events",
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Event",
+        "instance": "{\"templateId\": \"SourceEvent\", \"templateVersion\": \"1.1\", \"steps\": [{\"name\": \"SourceEventStep\", \"id\": \"6ed1aa53-5e4f-4971-b767-1d50d228bc44\", \"rows\": [{\"name\": \"SourceSelector\", \"kind\": \"SourceReference\", \"arguments\": [{\"name\": \"entityId\", \"type\": \"string\", \"value\": \"0ff3e483-95b4-4df4-a594-7ea7a2438083\"}]}]}]}"
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "4edfa555-f552-4a7a-a2b3-29963f511c50",
+    "payload": {
+      "name": "Device",
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Object"
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "d2319c8f-63e1-42f5-a265-e338dae2df28",
+    "payload": {
+      "name": "Operation",
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Object"
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "bfac6804-cfd6-425c-a095-c591c176d255",
+    "payload": {
+      "name": "App",
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Object"
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "1bb05552-7b76-4e08-abe7-0b1654c7640a",
+    "payload": {
+      "name": "DeviceId",
+      "parentObject": {
+        "targetUniqueIdentifier": "4edfa555-f552-4a7a-a2b3-29963f511c50"
+      },
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Attribute",
+        "instance": "{\"templateId\": \"IdentityPartAttribute\", \"templateVersion\": \"1.1\", \"steps\": [{\"name\": \"IdPartStep\", \"id\": \"d6c99fe4-2397-4082-804a-b35e3aacfb88\", \"rows\": [{\"name\": \"TypeAssertion\", \"kind\": \"TypeAssertion\", \"arguments\": [{\"name\": \"op\", \"type\": \"string\", \"value\": \"Text\"}, {\"name\": \"format\", \"type\": \"string\", \"value\": \"\"}]}]}]}"
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "f91227b9-9ca0-4c34-a46b-22772febda7c",
+    "payload": {
+      "name": "OperationName",
+      "parentObject": {
+        "targetUniqueIdentifier": "d2319c8f-63e1-42f5-a265-e338dae2df28"
+      },
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Attribute",
+        "instance": "{\"templateId\": \"IdentityPartAttribute\", \"templateVersion\": \"1.1\", \"steps\": [{\"name\": \"IdPartStep\", \"id\": \"147de27f-b671-453b-a1ea-bc22fe6aaa28\", \"rows\": [{\"name\": \"TypeAssertion\", \"kind\": \"TypeAssertion\", \"arguments\": [{\"name\": \"op\", \"type\": \"string\", \"value\": \"Text\"}, {\"name\": \"format\", \"type\": \"string\", \"value\": \"\"}]}]}]}"
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "82a0829a-f977-497d-9e93-8b0d7627d064",
+    "payload": {
+      "name": "AppName",
+      "parentObject": {
+        "targetUniqueIdentifier": "bfac6804-cfd6-425c-a095-c591c176d255"
+      },
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Attribute",
+        "instance": "{\"templateId\": \"IdentityPartAttribute\", \"templateVersion\": \"1.1\", \"steps\": [{\"name\": \"IdPartStep\", \"id\": \"c4a96233-d990-4223-9701-82afc9395a7b\", \"rows\": [{\"name\": \"TypeAssertion\", \"kind\": \"TypeAssertion\", \"arguments\": [{\"name\": \"op\", \"type\": \"string\", \"value\": \"Text\"}, {\"name\": \"format\", \"type\": \"string\", \"value\": \"\"}]}]}]}"
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "0470e9d5-5fe3-45a8-abfe-90c4f5858b3b",
+    "payload": {
+      "name": "DeviceId",
+      "parentObject": {
+        "targetUniqueIdentifier": "4edfa555-f552-4a7a-a2b3-29963f511c50"
+      },
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Attribute",
+        "instance": "{\"templateId\": \"IdentityPartAttribute\", \"templateVersion\": \"1.1\", \"steps\": [{\"name\": \"IdPartStep\", \"id\": \"970b3832-a87b-47d6-a5d9-76ef08c15942\", \"rows\": [{\"name\": \"TypeAssertion\", \"kind\": \"TypeAssertion\", \"arguments\": [{\"name\": \"op\", \"type\": \"string\", \"value\": \"Text\"}, {\"name\": \"format\", \"type\": \"string\", \"value\": \"\"}]}]}]}"
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "15374100-5694-4ad0-8a40-c7cb35bf5062",
+    "payload": {
+      "name": "BatteryLevel",
+      "parentObject": {
+        "targetUniqueIdentifier": "4edfa555-f552-4a7a-a2b3-29963f511c50"
+      },
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Attribute",
+        "instance": "{\"templateId\": \"BasicEventAttribute\", \"templateVersion\": \"1.1\", \"steps\": [{\"name\": \"EventSelectStep\", \"id\": \"f00ceba7-f9e3-4597-9303-9fa503fc6196\", \"rows\": [{\"name\": \"EventSelector\", \"kind\": \"Event\", \"arguments\": [{\"kind\": \"EventReference\", \"type\": \"complex\", \"arguments\": [{\"name\": \"entityId\", \"type\": \"string\", \"value\": \"5c55886d-07c8-4cc7-8e8a-e72ac511d0fa\"}], \"name\": \"event\"}]}, {\"name\": \"EventFieldSelector\", \"kind\": \"EventField\", \"arguments\": [{\"name\": \"fieldName\", \"type\": \"string\", \"value\": \"BatteryLevel\"}]}]}, {\"name\": \"EventComputeStep\", \"id\": \"c7d53ba6-0cdd-404c-ad99-e6284b307776\", \"rows\": [{\"name\": \"TypeAssertion\", \"kind\": \"TypeAssertion\", \"arguments\": [{\"name\": \"op\", \"type\": \"string\", \"value\": \"Number\"}, {\"name\": \"format\", \"type\": \"string\", \"value\": \"\"}]}]}]}"
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "8e1c3a7d-f33a-472b-a268-738c5f3a9ab8",
+    "payload": {
+      "name": "ErrorCount",
+      "parentObject": {
+        "targetUniqueIdentifier": "d2319c8f-63e1-42f5-a265-e338dae2df28"
+      },
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Attribute",
+        "instance": "{\"templateId\": \"BasicEventAttribute\", \"templateVersion\": \"1.1\", \"steps\": [{\"name\": \"EventSelectStep\", \"id\": \"c82aa0ce-a447-4101-9909-5e3d046680fe\", \"rows\": [{\"name\": \"EventSelector\", \"kind\": \"Event\", \"arguments\": [{\"kind\": \"EventReference\", \"type\": \"complex\", \"arguments\": [{\"name\": \"entityId\", \"type\": \"string\", \"value\": \"2bc95025-70e8-482b-b8ca-9d5e3864dafb\"}], \"name\": \"event\"}]}, {\"name\": \"EventFieldSelector\", \"kind\": \"EventField\", \"arguments\": [{\"name\": \"fieldName\", \"type\": \"string\", \"value\": \"ErrorCount\"}]}]}, {\"name\": \"EventComputeStep\", \"id\": \"4e26e1e6-0489-4307-8927-d940d73ceff6\", \"rows\": [{\"name\": \"TypeAssertion\", \"kind\": \"TypeAssertion\", \"arguments\": [{\"name\": \"op\", \"type\": \"string\", \"value\": \"Number\"}, {\"name\": \"format\", \"type\": \"string\", \"value\": \"\"}]}]}]}"
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "6251d34c-454e-414b-b187-9da020df7183",
+    "payload": {
+      "name": "TotalCrashes",
+      "parentObject": {
+        "targetUniqueIdentifier": "bfac6804-cfd6-425c-a095-c591c176d255"
+      },
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Attribute",
+        "instance": "{\"templateId\": \"BasicEventAttribute\", \"templateVersion\": \"1.1\", \"steps\": [{\"name\": \"EventSelectStep\", \"id\": \"cd4fe368-1e07-471b-89ca-8e14fa01aa2d\", \"rows\": [{\"name\": \"EventSelector\", \"kind\": \"Event\", \"arguments\": [{\"kind\": \"EventReference\", \"type\": \"complex\", \"arguments\": [{\"name\": \"entityId\", \"type\": \"string\", \"value\": \"3224e1ac-7f77-4079-aba4-157d4fea949b\"}], \"name\": \"event\"}]}, {\"name\": \"EventFieldSelector\", \"kind\": \"EventField\", \"arguments\": [{\"name\": \"fieldName\", \"type\": \"string\", \"value\": \"TotalCrashes\"}]}]}, {\"name\": \"EventComputeStep\", \"id\": \"17c27064-2c62-4718-a82b-f4871e92d319\", \"rows\": [{\"name\": \"TypeAssertion\", \"kind\": \"TypeAssertion\", \"arguments\": [{\"name\": \"op\", \"type\": \"string\", \"value\": \"Number\"}, {\"name\": \"format\", \"type\": \"string\", \"value\": \"\"}]}]}]}"
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "1cf41983-8c04-4bc2-ac7d-bb034aea38c8",
+    "payload": {
+      "name": "SignalStrength",
+      "parentObject": {
+        "targetUniqueIdentifier": "4edfa555-f552-4a7a-a2b3-29963f511c50"
+      },
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Attribute",
+        "instance": "{\"templateId\": \"BasicEventAttribute\", \"templateVersion\": \"1.1\", \"steps\": [{\"name\": \"EventSelectStep\", \"id\": \"c3f29d1d-0f1d-4810-a13a-0110233b841d\", \"rows\": [{\"name\": \"EventSelector\", \"kind\": \"Event\", \"arguments\": [{\"kind\": \"EventReference\", \"type\": \"complex\", \"arguments\": [{\"name\": \"entityId\", \"type\": \"string\", \"value\": \"e05d9cc4-1097-4cec-a0b3-0c563fe21ccf\"}], \"name\": \"event\"}]}, {\"name\": \"EventFieldSelector\", \"kind\": \"EventField\", \"arguments\": [{\"name\": \"fieldName\", \"type\": \"string\", \"value\": \"SignalStrength\"}]}]}, {\"name\": \"EventComputeStep\", \"id\": \"8dbeee0c-a3c0-4cb7-b328-2421436a7814\", \"rows\": [{\"name\": \"TypeAssertion\", \"kind\": \"TypeAssertion\", \"arguments\": [{\"name\": \"op\", \"type\": \"string\", \"value\": \"Number\"}, {\"name\": \"format\", \"type\": \"string\", \"value\": \"\"}]}]}]}"
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "0f64e22e-aa72-4e9d-8076-bc9af433a748",
+    "payload": {
+      "name": "Low Battery Alert",
+      "parentObject": {
+        "targetUniqueIdentifier": "4edfa555-f552-4a7a-a2b3-29963f511c50"
+      },
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Rule",
+        "instance": "{\"templateId\": \"AttributeTrigger\", \"templateVersion\": \"1.1\", \"steps\": [{\"name\": \"ScalarSelectStep\", \"id\": \"e667171e-4d19-4f59-bc21-cd87b48933e1\", \"rows\": [{\"name\": \"AttributeSelector\", \"kind\": \"Attribute\", \"arguments\": [{\"kind\": \"AttributeReference\", \"type\": \"complex\", \"arguments\": [{\"name\": \"entityId\", \"type\": \"string\", \"value\": \"15374100-5694-4ad0-8a40-c7cb35bf5062\"}], \"name\": \"attribute\"}]}, {\"name\": \"NumberSummary\", \"kind\": \"NumberSummary\", \"arguments\": [{\"name\": \"op\", \"type\": \"string\", \"value\": \"Latest\"}, {\"kind\": \"TimeDrivenWindowSpec\", \"type\": \"complex\", \"arguments\": [{\"name\": \"width\", \"type\": \"timeSpan\", \"value\": 300000.0}, {\"name\": \"hop\", \"type\": \"timeSpan\", \"value\": 300000.0}], \"name\": \"window\"}]}]}, {\"name\": \"ScalarDetectStep\", \"id\": \"ef9773ee-b8d6-4979-96ab-45543977b8cb\", \"rows\": [{\"name\": \"NumberBecomes\", \"kind\": \"NumberBecomes\", \"arguments\": [{\"name\": \"op\", \"type\": \"string\", \"value\": \"BecomesLessThan\"}, {\"name\": \"value\", \"type\": \"number\", \"value\": 15.0}]}, {\"name\": \"OccurrenceOption\", \"kind\": \"EachTime\", \"arguments\": []}]}, {\"name\": \"ActStep\", \"id\": \"63913cc2-0817-4515-aa13-cc47b801a7c0\", \"rows\": [{\"name\": \"TeamsBinding\", \"kind\": \"TeamsMessage\", \"arguments\": [{\"name\": \"messageLocale\", \"type\": \"string\", \"value\": \"\"}, {\"name\": \"recipients\", \"type\": \"array\", \"values\": [{\"type\": \"string\", \"value\": \"pidoudet@microsoft.com\"}]}, {\"name\": \"headline\", \"type\": \"array\", \"values\": [{\"type\": \"string\", \"value\": \"Alert triggered\"}]}, {\"name\": \"optionalMessage\", \"type\": \"array\", \"values\": [{\"type\": \"string\", \"value\": \"Check the RTI Demo dashboard for details.\"}]}, {\"name\": \"additionalInformation\", \"type\": \"array\", \"values\": []}]}]}]}",
+        "settings": {
+          "shouldRun": false,
+          "shouldApplyRuleOnUpdate": false
+        }
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "239a4427-e5ae-414a-8097-7e1b16c1014e",
+    "payload": {
+      "name": "Azure Error Spike",
+      "parentObject": {
+        "targetUniqueIdentifier": "d2319c8f-63e1-42f5-a265-e338dae2df28"
+      },
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Rule",
+        "instance": "{\"templateId\": \"AttributeTrigger\", \"templateVersion\": \"1.1\", \"steps\": [{\"name\": \"ScalarSelectStep\", \"id\": \"ca553512-9cd4-401c-bc79-842ef2354c56\", \"rows\": [{\"name\": \"AttributeSelector\", \"kind\": \"Attribute\", \"arguments\": [{\"kind\": \"AttributeReference\", \"type\": \"complex\", \"arguments\": [{\"name\": \"entityId\", \"type\": \"string\", \"value\": \"8e1c3a7d-f33a-472b-a268-738c5f3a9ab8\"}], \"name\": \"attribute\"}]}, {\"name\": \"NumberSummary\", \"kind\": \"NumberSummary\", \"arguments\": [{\"name\": \"op\", \"type\": \"string\", \"value\": \"Sum\"}, {\"kind\": \"TimeDrivenWindowSpec\", \"type\": \"complex\", \"arguments\": [{\"name\": \"width\", \"type\": \"timeSpan\", \"value\": 600000.0}, {\"name\": \"hop\", \"type\": \"timeSpan\", \"value\": 600000.0}], \"name\": \"window\"}]}]}, {\"name\": \"ScalarDetectStep\", \"id\": \"010c27c5-0f2a-4ba1-ad4c-e9c04b1b3c73\", \"rows\": [{\"name\": \"NumberBecomes\", \"kind\": \"NumberBecomes\", \"arguments\": [{\"name\": \"op\", \"type\": \"string\", \"value\": \"BecomesGreaterThan\"}, {\"name\": \"value\", \"type\": \"number\", \"value\": 5.0}]}, {\"name\": \"OccurrenceOption\", \"kind\": \"EachTime\", \"arguments\": []}]}, {\"name\": \"ActStep\", \"id\": \"80129d6a-872a-4f9c-adab-a3066d74db82\", \"rows\": [{\"name\": \"TeamsBinding\", \"kind\": \"TeamsMessage\", \"arguments\": [{\"name\": \"messageLocale\", \"type\": \"string\", \"value\": \"\"}, {\"name\": \"recipients\", \"type\": \"array\", \"values\": [{\"type\": \"string\", \"value\": \"pidoudet@microsoft.com\"}]}, {\"name\": \"headline\", \"type\": \"array\", \"values\": [{\"type\": \"string\", \"value\": \"Alert triggered\"}]}, {\"name\": \"optionalMessage\", \"type\": \"array\", \"values\": [{\"type\": \"string\", \"value\": \"Check the RTI Demo dashboard for details.\"}]}, {\"name\": \"additionalInformation\", \"type\": \"array\", \"values\": []}]}]}]}",
+        "settings": {
+          "shouldRun": false,
+          "shouldApplyRuleOnUpdate": false
+        }
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "ea861e95-c647-4194-a8e4-54824385683e",
+    "payload": {
+      "name": "App Crash Burst",
+      "parentObject": {
+        "targetUniqueIdentifier": "bfac6804-cfd6-425c-a095-c591c176d255"
+      },
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Rule",
+        "instance": "{\"templateId\": \"AttributeTrigger\", \"templateVersion\": \"1.1\", \"steps\": [{\"name\": \"ScalarSelectStep\", \"id\": \"0e5aac16-c128-4bea-8ad9-ce68e502ecc1\", \"rows\": [{\"name\": \"AttributeSelector\", \"kind\": \"Attribute\", \"arguments\": [{\"kind\": \"AttributeReference\", \"type\": \"complex\", \"arguments\": [{\"name\": \"entityId\", \"type\": \"string\", \"value\": \"6251d34c-454e-414b-b187-9da020df7183\"}], \"name\": \"attribute\"}]}, {\"name\": \"NumberSummary\", \"kind\": \"NumberSummary\", \"arguments\": [{\"name\": \"op\", \"type\": \"string\", \"value\": \"Sum\"}, {\"kind\": \"TimeDrivenWindowSpec\", \"type\": \"complex\", \"arguments\": [{\"name\": \"width\", \"type\": \"timeSpan\", \"value\": 300000.0}, {\"name\": \"hop\", \"type\": \"timeSpan\", \"value\": 300000.0}], \"name\": \"window\"}]}]}, {\"name\": \"ScalarDetectStep\", \"id\": \"be0ee6d8-7ccd-4f31-a6ef-796de97b2fb3\", \"rows\": [{\"name\": \"NumberBecomes\", \"kind\": \"NumberBecomes\", \"arguments\": [{\"name\": \"op\", \"type\": \"string\", \"value\": \"BecomesGreaterThan\"}, {\"name\": \"value\", \"type\": \"number\", \"value\": 3.0}]}, {\"name\": \"OccurrenceOption\", \"kind\": \"EachTime\", \"arguments\": []}]}, {\"name\": \"ActStep\", \"id\": \"5c4f2932-3d7a-4e56-8c8d-6292cf1db576\", \"rows\": [{\"name\": \"TeamsBinding\", \"kind\": \"TeamsMessage\", \"arguments\": [{\"name\": \"messageLocale\", \"type\": \"string\", \"value\": \"\"}, {\"name\": \"recipients\", \"type\": \"array\", \"values\": [{\"type\": \"string\", \"value\": \"pidoudet@microsoft.com\"}]}, {\"name\": \"headline\", \"type\": \"array\", \"values\": [{\"type\": \"string\", \"value\": \"Alert triggered\"}]}, {\"name\": \"optionalMessage\", \"type\": \"array\", \"values\": [{\"type\": \"string\", \"value\": \"Check the RTI Demo dashboard for details.\"}]}, {\"name\": \"additionalInformation\", \"type\": \"array\", \"values\": []}]}]}]}",
+        "settings": {
+          "shouldRun": false,
+          "shouldApplyRuleOnUpdate": false
+        }
+      }
+    },
+    "type": "timeSeriesView-v1"
+  },
+  {
+    "uniqueIdentifier": "b3f39f09-b227-4e15-a445-afe481335531",
+    "payload": {
+      "name": "Weak Signal Alert",
+      "parentObject": {
+        "targetUniqueIdentifier": "4edfa555-f552-4a7a-a2b3-29963f511c50"
+      },
+      "parentContainer": {
+        "targetUniqueIdentifier": "9bda529f-0f34-457e-a9e6-3fcd4a9ad4c1"
+      },
+      "definition": {
+        "type": "Rule",
+        "instance": "{\"templateId\": \"AttributeTrigger\", \"templateVersion\": \"1.1\", \"steps\": [{\"name\": \"ScalarSelectStep\", \"id\": \"907d88f1-1302-40d5-8755-b4e0c8085805\", \"rows\": [{\"name\": \"AttributeSelector\", \"kind\": \"Attribute\", \"arguments\": [{\"kind\": \"AttributeReference\", \"type\": \"complex\", \"arguments\": [{\"name\": \"entityId\", \"type\": \"string\", \"value\": \"1cf41983-8c04-4bc2-ac7d-bb034aea38c8\"}], \"name\": \"attribute\"}]}, {\"name\": \"NumberSummary\", \"kind\": \"NumberSummary\", \"arguments\": [{\"name\": \"op\", \"type\": \"string\", \"value\": \"Latest\"}, {\"kind\": \"TimeDrivenWindowSpec\", \"type\": \"complex\", \"arguments\": [{\"name\": \"width\", \"type\": \"timeSpan\", \"value\": 300000.0}, {\"name\": \"hop\", \"type\": \"timeSpan\", \"value\": 300000.0}], \"name\": \"window\"}]}]}, {\"name\": \"ScalarDetectStep\", \"id\": \"588dac8e-b2dd-4916-9b3f-0e731c76c7ea\", \"rows\": [{\"name\": \"NumberBecomes\", \"kind\": \"NumberBecomes\", \"arguments\": [{\"name\": \"op\", \"type\": \"string\", \"value\": \"BecomesLessThan\"}, {\"name\": \"value\", \"type\": \"number\", \"value\": -90.0}]}, {\"name\": \"OccurrenceOption\", \"kind\": \"EachTime\", \"arguments\": []}]}, {\"name\": \"ActStep\", \"id\": \"820e9b9a-9a23-4b0c-8f28-fbc0b3fb1008\", \"rows\": [{\"name\": \"TeamsBinding\", \"kind\": \"TeamsMessage\", \"arguments\": [{\"name\": \"messageLocale\", \"type\": \"string\", \"value\": \"\"}, {\"name\": \"recipients\", \"type\": \"array\", \"values\": [{\"type\": \"string\", \"value\": \"pidoudet@microsoft.com\"}]}, {\"name\": \"headline\", \"type\": \"array\", \"values\": [{\"type\": \"string\", \"value\": \"Alert triggered\"}]}, {\"name\": \"optionalMessage\", \"type\": \"array\", \"values\": [{\"type\": \"string\", \"value\": \"Check the RTI Demo dashboard for details.\"}]}, {\"name\": \"additionalInformation\", \"type\": \"array\", \"values\": []}]}]}]}",
+        "settings": {
+          "shouldRun": false,
+          "shouldApplyRuleOnUpdate": false
+        }
+      }
+    },
+    "type": "timeSeriesView-v1"
+  }
+]

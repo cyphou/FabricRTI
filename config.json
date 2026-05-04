@@ -1,0 +1,276 @@
+{
+  "project": "RTI-Demo",
+  "description": "Real-Time Intelligence Demo — Azure Sub + Phone Telemetry",
+
+  "azure": {
+    "subscription_id": "e80f8e45-cde4-42ed-b913-695b2938f23b",
+    "resource_group": "rg-rti-demo",
+    "location": "westeurope",
+    "event_hub": {
+      "namespace": "eh-rti-demo",
+      "sku": "Standard",
+      "hubs": {
+        "azure_activity": {
+          "name": "azure-activity",
+          "partition_count": 2,
+          "message_retention": 1
+        },
+        "phone_telemetry": {
+          "name": "phone-telemetry",
+          "partition_count": 2,
+          "message_retention": 1
+        }
+      },
+      "connection_string": ""
+    },
+    "diagnostic_settings": {
+      "name": "rti-demo-to-eventhub",
+      "categories": ["Administrative", "Security", "Alert", "Policy"]
+    }
+  },
+
+  "fabric": {
+    "workspace_id": "92200814-2aa1-4f40-8073-f28b0ef79a0d",
+    "workspace_name": "RTI-Demo",
+    "ingestion_mode": "custom_endpoint",
+    "kusto_cluster_uri": "https://trd-19dhtm16qjthdvwa1z.z3.kusto.fabric.microsoft.com",
+    "items": {
+      "eventhouse": {
+        "id": "17f79e17-d08e-4699-a366-17ca6bca1472",
+        "display_name": "RTI-Demo-Eventhouse",
+        "description": "Analytics engine for Azure Activity + Phone Telemetry"
+      },
+      "kql_database": {
+        "id": "15f86b6f-830b-42d5-bfe5-7816b2a49f30",
+        "display_name": "RTI-Demo-Eventhouse",
+        "description": "KQL Database with AzureActivity (Region) and PhoneTelemetry (City) tables"
+      },
+      "eventstreams": [
+        {
+          "id": "a5e8ca18-c015-42e7-a150-fb233c1f303f",
+          "display_name": "Activity-Stream",
+          "description": "Ingests Azure Activity Log from Event Hub",
+          "source": {
+            "type": "AzureEventHubs",
+            "event_hub_name": "azure-activity",
+            "consumer_group": "$Default",
+            "data_format": "Json"
+          },
+          "destination": {
+            "type": "Eventhouse",
+            "table_name": "AzureActivity",
+            "ingestion_mode": "DirectIngestion"
+          }
+        },
+        {
+          "id": "cac6b1cd-055b-4139-a3b0-f0bdf26a9d06",
+          "display_name": "Phone-Stream",
+          "description": "Ingests phone sensor data from Event Hub",
+          "source": {
+            "type": "AzureEventHubs",
+            "event_hub_name": "phone-telemetry",
+            "consumer_group": "$Default",
+            "data_format": "Json"
+          },
+          "destination": {
+            "type": "Eventhouse",
+            "table_name": "PhoneTelemetry",
+            "ingestion_mode": "DirectIngestion"
+          }
+        }
+      ],
+      "kql_queryset": {
+        "id": "28a33f0e-29e1-408f-9e2b-049e9f9b1e7e",
+        "display_name": "RTI-Demo-Queries",
+        "description": "30 pre-built KQL queries including ML (anomaly detection, forecasting, clustering)",
+        "queries_file": "demo-queries.kql"
+      },
+      "kql_dashboard": {
+        "id": "b028b433-8616-4367-aea2-357af84da7c1",
+        "display_name": "Operations-Dashboard",
+        "description": "Real-Time operational dashboard with 3 pages",
+        "auto_refresh": {
+          "enabled": true,
+          "default_interval": "30s",
+          "min_interval": "15s"
+        },
+        "pages": [
+          {
+            "name": "Azure Infrastructure",
+            "tiles": [
+              {
+                "title": "Activity Timeline",
+                "visual_type": "timechart",
+                "query": "AzureActivity\n| summarize EventCount = count() by bin(Timestamp, 5m), Level\n| render timechart",
+                "width": 12,
+                "height": 5
+              },
+              {
+                "title": "Failed Operations",
+                "visual_type": "table",
+                "query": "AzureActivity\n| where Level == \"Error\"\n| project Timestamp, OperationName, ResourceGroup, Caller\n| order by Timestamp desc\n| take 50",
+                "width": 6,
+                "height": 5
+              },
+              {
+                "title": "Operations by Caller",
+                "visual_type": "piechart",
+                "query": "AzureActivity\n| summarize count() by Caller\n| top 10 by count_\n| render piechart",
+                "width": 6,
+                "height": 5
+              },
+              {
+                "title": "Error Rate",
+                "visual_type": "stat",
+                "query": "AzureActivity\n| summarize ErrorRate = round(100.0 * countif(Level == \"Error\") / count(), 1)",
+                "width": 3,
+                "height": 3
+              }
+            ]
+          },
+          {
+            "name": "Phone Fleet Health",
+            "tiles": [
+              {
+                "title": "Battery Levels",
+                "visual_type": "timechart",
+                "query": "PhoneTelemetry\n| summarize avg(BatteryLevel) by City, bin(Timestamp, 1m)\n| render timechart",
+                "width": 12,
+                "height": 5
+              },
+              {
+                "title": "Device Locations",
+                "visual_type": "map",
+                "query": "PhoneTelemetry\n| summarize arg_max(Timestamp, *) by DeviceId\n| project DeviceId, User, City, Latitude, Longitude, BatteryLevel, NetworkType",
+                "width": 6,
+                "height": 6
+              },
+              {
+                "title": "App Crashes",
+                "visual_type": "columnchart",
+                "query": "PhoneTelemetry\n| where CrashCount > 0\n| summarize TotalCrashes = sum(CrashCount) by AppName\n| order by TotalCrashes desc\n| render columnchart",
+                "width": 6,
+                "height": 6
+              },
+              {
+                "title": "Fleet Status",
+                "visual_type": "table",
+                "query": "PhoneTelemetry\n| summarize arg_max(Timestamp, *) by DeviceId\n| project DeviceId, User, City, BatteryLevel, NetworkType, CpuUsage, SignalStrength\n| order by BatteryLevel asc",
+                "width": 12,
+                "height": 4
+              }
+            ]
+          },
+          {
+            "name": "Combined Operations",
+            "tiles": [
+              {
+                "title": "Ingestion Rate",
+                "visual_type": "timechart",
+                "query": "union\n  (AzureActivity | summarize Events = count() by bin(Timestamp, 1m) | extend Source = \"Azure\"),\n  (PhoneTelemetry | summarize Events = count() by bin(Timestamp, 1m) | extend Source = \"Phone\")\n| render timechart",
+                "width": 12,
+                "height": 5
+              },
+              {
+                "title": "Signal Strength Trend",
+                "visual_type": "timechart",
+                "query": "PhoneTelemetry\n| summarize AvgSignal = avg(SignalStrength) by DeviceId, bin(Timestamp, 5m)\n| render timechart",
+                "width": 6,
+                "height": 5
+              },
+              {
+                "title": "Network Distribution",
+                "visual_type": "piechart",
+                "query": "PhoneTelemetry\n| summarize count() by NetworkType\n| render piechart",
+                "width": 6,
+                "height": 5
+              }
+            ]
+          }
+        ]
+      },
+      "activator": {
+        "id": "b52f624e-d172-427c-9c0b-fb545f73fe9f",
+        "display_name": "Demo-Alerts",
+        "description": "Automated alert rules for operations monitoring",
+        "rules": [
+          {
+            "name": "Azure Error Spike",
+            "source_table": "AzureActivity",
+            "condition": "count() > 5",
+            "window": "10m",
+            "filter": "Level == 'Error'",
+            "action": "teams",
+            "message": "High Azure error rate detected: {ErrorCount} errors in last 10 minutes"
+          },
+          {
+            "name": "Low Battery Alert",
+            "source_table": "PhoneTelemetry",
+            "condition": "BatteryLevel < 15",
+            "object_id_column": "DeviceId",
+            "action": "email",
+            "message": "Device {DeviceId} battery critically low: {BatteryLevel}%"
+          },
+          {
+            "name": "App Crash Burst",
+            "source_table": "PhoneTelemetry",
+            "condition": "sum(CrashCount) > 3",
+            "window": "5m",
+            "object_id_column": "AppName",
+            "action": "pipeline",
+            "message": "App {AppName} crash burst: {TotalCrashes} crashes in 5 minutes"
+          },
+          {
+            "name": "Device Offline",
+            "source_table": "PhoneTelemetry",
+            "condition": "heartbeat",
+            "timeout": "5m",
+            "object_id_column": "DeviceId",
+            "action": "teams",
+            "message": "Device {DeviceId} has not reported for 5+ minutes"
+          }
+        ]
+      },
+      "data_agent": {
+        "id": "67dc90c2-a677-4b56-a99b-3bbc97348328",
+        "type": "DataAgent",
+        "display_name": "RTI-Demo-DataAgent",
+        "description": "Natural language queries on RTI demo data — ask questions about Azure activity and phone telemetry",
+        "kql_database": "RTI-Demo-Eventhouse"
+      },
+      "ops_agent": {
+        "id": "772063c7-0a56-4d5d-b4cd-8b46df336105",
+        "type": "OperationsAgent",
+        "display_name": "RTI-Ops-Agent",
+        "description": "Autonomous operational investigation agent — monitors real-time data, analyzes anomalies, correlates Azure activity with phone telemetry, and recommends business actions",
+        "kql_database": "RTI-Demo-Eventhouse"
+      },
+      "anomaly_detector": {
+        "id": "fb3f49a5-1538-40db-8340-e5bc248b252f",
+        "type": "AnomalyDetector",
+        "display_name": "RTI-Anomaly-Detector",
+        "description": "Anomaly detection on phone battery levels, signal strength, crash rates, and Azure error spikes",
+        "kql_database": "RTI-Demo-Eventhouse"
+      }
+    }
+  },
+
+  "simulator": {
+    "phone": {
+      "device_count": 100,
+      "city_count": 25,
+      "phone_models": ["iPhone", "Galaxy", "Pixel", "OnePlus", "Xiaomi"],
+      "interval_seconds": 3,
+      "events_per_minute": 2000
+    },
+    "activity": {
+      "operation_count": 58,
+      "resource_group_count": 15,
+      "caller_count": 16,
+      "region_count": 15,
+      "batch_size": "5-20",
+      "interval_seconds": 5,
+      "events_per_minute": 750
+    }
+  }
+}

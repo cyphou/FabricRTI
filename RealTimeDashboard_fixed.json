@@ -1,0 +1,378 @@
+{
+  "$schema": "https://dataexplorer.azure.com/static/d/schema/20/dashboard.json",
+  "schema_version": "20",
+  "title": "Operations-Dashboard",
+  "autoRefresh": {
+    "enabled": true,
+    "defaultInterval": "30s",
+    "minInterval": "30s"
+  },
+  "dataSources": [
+    {
+      "id": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "name": "RTI-Demo-DB",
+      "clusterUri": "https://trd-19dhtm16qjthdvwa1z.z3.kusto.fabric.microsoft.com",
+      "database": "RTI-Demo-Eventhouse",
+      "kind": "manual-kusto",
+      "scopeId": "kusto"
+    }
+  ],
+  "pages": [
+    {
+      "id": "624b60d1-3714-4c01-bd58-f557a66e1a10",
+      "name": "Azure Infrastructure"
+    },
+    {
+      "id": "8d6f30ab-b3dc-4d63-8139-fa3950123d56",
+      "name": "Phone Fleet Health"
+    },
+    {
+      "id": "83027c9f-adf9-47a8-a8f9-834fe0caaff6",
+      "name": "Combined Operations"
+    },
+    {
+      "id": "f12f6073-ce7a-4ef3-9729-41cd88b34811",
+      "name": "ML Analytics"
+    }
+  ],
+  "parameters": [],
+  "tiles": [
+    {
+      "id": "c31bcacd-824d-4026-898e-6075191c9083",
+      "title": "Activity Timeline",
+      "query": "AzureActivity\n| where Timestamp > ago(1h)\n| summarize EventCount = count() by bin(Timestamp, 5m), Level",
+      "visualType": "line",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "624b60d1-3714-4c01-bd58-f557a66e1a10",
+      "layout": {
+        "x": 0,
+        "y": 0,
+        "width": 12,
+        "height": 8
+      },
+      "usedParamVariables": [],
+      "visualOptions": {
+        "xColumn": {
+          "type": "infer"
+        },
+        "yColumns": {
+          "type": "infer"
+        },
+        "seriesColumns": {
+          "type": "infer"
+        },
+        "hideLegend": false
+      }
+    },
+    {
+      "id": "e408167c-b38d-41ab-b642-c0c4e54ff976",
+      "title": "Failed Operations",
+      "query": "AzureActivity\n| where Level == 'Error'\n| project Timestamp, OperationName, ResourceGroup, Region, Caller\n| order by Timestamp desc\n| take 50",
+      "visualType": "table",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "624b60d1-3714-4c01-bd58-f557a66e1a10",
+      "layout": {
+        "x": 0,
+        "y": 8,
+        "width": 12,
+        "height": 8
+      },
+      "usedParamVariables": [],
+      "visualOptions": {}
+    },
+    {
+      "id": "aadeb81b-ae17-4ed7-8eb8-63ecf3af6064",
+      "title": "Operations by Caller",
+      "query": "AzureActivity\n| summarize Operations = count() by Caller\n| top 10 by Operations",
+      "visualType": "pie",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "624b60d1-3714-4c01-bd58-f557a66e1a10",
+      "layout": {
+        "x": 0,
+        "y": 16,
+        "width": 12,
+        "height": 8
+      },
+      "usedParamVariables": [],
+      "visualOptions": {}
+    },
+    {
+      "id": "c4180f90-7340-46b1-a015-aad07ced7e3f",
+      "title": "Error Rate %",
+      "query": "AzureActivity\n| summarize ErrorRate = round(100.0 * countif(Level == 'Error') / count(), 1)",
+      "visualType": "stat",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "624b60d1-3714-4c01-bd58-f557a66e1a10",
+      "layout": {
+        "x": 0,
+        "y": 24,
+        "width": 12,
+        "height": 7
+      },
+      "usedParamVariables": [],
+      "visualOptions": {}
+    },
+    {
+      "id": "6cfd2eb0-dcfb-48c9-ab41-2dfe0511a8b1",
+      "title": "Battery Levels by Device Type",
+      "query": "PhoneTelemetry\n| where isnotempty(DeviceId) and Timestamp >= datetime(2026-01-01)\n| summarize AvgBattery = round(avg(BatteryLevel), 1) by OS, bin(Timestamp, 1h)",
+      "visualType": "line",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "8d6f30ab-b3dc-4d63-8139-fa3950123d56",
+      "layout": {
+        "x": 0,
+        "y": 0,
+        "width": 12,
+        "height": 8
+      },
+      "usedParamVariables": [],
+      "visualOptions": {
+        "xColumn": {
+          "type": "infer"
+        },
+        "yColumns": {
+          "type": "infer"
+        },
+        "seriesColumns": {
+          "type": "infer"
+        },
+        "hideLegend": false
+      }
+    },
+    {
+      "id": "246ef260-1120-4e01-98de-f311babefa54",
+      "title": "Device Locations",
+      "query": "PhoneTelemetry\n| where isnotempty(DeviceId) and isnotnull(Latitude)\n| summarize arg_max(Timestamp, *) by DeviceId\n| project DeviceId, User, City, Latitude, Longitude, BatteryLevel, SignalStrength, NetworkType, OS",
+      "visualType": "map",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "8d6f30ab-b3dc-4d63-8139-fa3950123d56",
+      "layout": {
+        "x": 0,
+        "y": 8,
+        "width": 12,
+        "height": 16
+      },
+      "usedParamVariables": [],
+      "visualOptions": {
+        "map__bubbleFormat": "bubble",
+        "map__latitudeColumn": { "type": "specified", "value": "Latitude" },
+        "map__longitudeColumn": { "type": "specified", "value": "Longitude" },
+        "map__minBubbleSizeColumn": { "type": "specified", "value": "BatteryLevel" }
+      }
+    },
+    {
+      "id": "fc725b10-310b-4c55-982e-8b0ba053816c",
+      "title": "App Crashes",
+      "query": "PhoneTelemetry\n| where CrashCount > 0\n| summarize TotalCrashes = sum(CrashCount) by AppName\n| order by TotalCrashes desc",
+      "visualType": "column",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "8d6f30ab-b3dc-4d63-8139-fa3950123d56",
+      "layout": {
+        "x": 0,
+        "y": 24,
+        "width": 12,
+        "height": 8
+      },
+      "usedParamVariables": [],
+      "visualOptions": {}
+    },
+    {
+      "id": "11338bde-a9c5-4b19-8b09-b4a9a6e22983",
+      "title": "Fleet Status",
+      "query": "PhoneTelemetry\n| where isnotempty(DeviceId)\n| summarize arg_max(Timestamp, *) by DeviceId\n| project DeviceId, User, City, BatteryLevel, NetworkType, CpuUsage, SignalStrength\n| order by BatteryLevel asc",
+      "visualType": "table",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "8d6f30ab-b3dc-4d63-8139-fa3950123d56",
+      "layout": {
+        "x": 0,
+        "y": 32,
+        "width": 12,
+        "height": 8
+      },
+      "usedParamVariables": [],
+      "visualOptions": {}
+    },
+    {
+      "id": "d01e3102-ed91-447a-a93d-d9bf3864d80f",
+      "title": "Ingestion Rate",
+      "query": "union\n  (AzureActivity | where Timestamp > ago(1h) | summarize Events = count() by bin(Timestamp, 1m) | extend Source = 'Azure'),\n  (PhoneTelemetry | where Timestamp > ago(1h) | summarize Events = count() by bin(Timestamp, 1m) | extend Source = 'Phone')",
+      "visualType": "line",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "83027c9f-adf9-47a8-a8f9-834fe0caaff6",
+      "layout": {
+        "x": 0,
+        "y": 0,
+        "width": 12,
+        "height": 8
+      },
+      "usedParamVariables": [],
+      "visualOptions": {
+        "xColumn": {
+          "type": "infer"
+        },
+        "yColumns": {
+          "type": "infer"
+        },
+        "seriesColumns": {
+          "type": "infer"
+        },
+        "hideLegend": false
+      }
+    },
+    {
+      "id": "80f41950-5230-41ab-b08d-fd3048339bf1",
+      "title": "Signal Strength Trend",
+      "query": "PhoneTelemetry\n| where isnotempty(City)\n| summarize AvgSignal = round(avg(SignalStrength), 1) by City, bin(Timestamp, 1h)",
+      "visualType": "line",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "83027c9f-adf9-47a8-a8f9-834fe0caaff6",
+      "layout": {
+        "x": 0,
+        "y": 8,
+        "width": 12,
+        "height": 8
+      },
+      "usedParamVariables": [],
+      "visualOptions": {
+        "xColumn": {
+          "type": "infer"
+        },
+        "yColumns": {
+          "type": "infer"
+        },
+        "seriesColumns": {
+          "type": "infer"
+        },
+        "hideLegend": false
+      }
+    },
+    {
+      "id": "b377f25d-4043-4c35-ad13-c340521a3a84",
+      "title": "Network Distribution",
+      "query": "PhoneTelemetry\n| where isnotempty(NetworkType)\n| summarize DeviceCount = count() by NetworkType",
+      "visualType": "pie",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "83027c9f-adf9-47a8-a8f9-834fe0caaff6",
+      "layout": {
+        "x": 0,
+        "y": 16,
+        "width": 12,
+        "height": 8
+      },
+      "usedParamVariables": [],
+      "visualOptions": {}
+    },
+    {
+      "id": "ab45b271-a334-485d-bc77-32a651991605",
+      "title": "Error Spikes (Auto-Detected)",
+      "query": "AzureActivity\n| where Level == 'Error' and Timestamp > ago(1h)\n| make-series ErrorCount = count() default=0 on Timestamp step 5m\n| extend (anomalies, score, baseline) = series_decompose_anomalies(ErrorCount)\n| mv-expand Timestamp to typeof(datetime), ErrorCount to typeof(long), anomalies to typeof(int), baseline to typeof(real)\n| project Timestamp, ErrorCount, Baseline=baseline, IsSpike=iff(anomalies != 0, ErrorCount, long(null))",
+      "visualType": "line",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "f12f6073-ce7a-4ef3-9729-41cd88b34811",
+      "layout": {
+        "x": 0,
+        "y": 0,
+        "width": 12,
+        "height": 8
+      },
+      "usedParamVariables": [],
+      "visualOptions": {}
+    },
+    {
+      "id": "3f30e8b3-b96a-400d-830d-cc7cfddff0cf",
+      "title": "Activity Forecast (Next 30 min)",
+      "query": "AzureActivity\n| where Timestamp > ago(1h)\n| make-series EventCount = count() default=0 on Timestamp step 5m\n| extend Forecast = series_decompose_forecast(EventCount, 6)\n| mv-expand Timestamp to typeof(datetime), EventCount to typeof(long), Forecast to typeof(real)\n| project Timestamp, EventCount, Forecast",
+      "visualType": "line",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "f12f6073-ce7a-4ef3-9729-41cd88b34811",
+      "layout": {
+        "x": 0,
+        "y": 8,
+        "width": 12,
+        "height": 8
+      },
+      "usedParamVariables": [],
+      "visualOptions": {}
+    },
+    {
+      "id": "16d199ff-1b4a-43c1-ad4f-250bff47210d",
+      "title": "Unusual Battery Drops by OS",
+      "query": "PhoneTelemetry\n| where isnotempty(OS) and Timestamp > ago(1h)\n| make-series AvgBattery = avg(BatteryLevel) default=0 on Timestamp step 5m by OS\n| extend (anomalies, score, baseline) = series_decompose_anomalies(AvgBattery)\n| mv-expand Timestamp to typeof(datetime), AvgBattery to typeof(real), anomalies to typeof(int), baseline to typeof(real)\n| project Timestamp, OS, AvgBattery, Baseline=baseline, IsAnomaly=iff(anomalies != 0, AvgBattery, real(null))",
+      "visualType": "line",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "f12f6073-ce7a-4ef3-9729-41cd88b34811",
+      "layout": {
+        "x": 0,
+        "y": 16,
+        "width": 12,
+        "height": 8
+      },
+      "usedParamVariables": [],
+      "visualOptions": {}
+    },
+    {
+      "id": "f171e9c2-f874-40e2-9b63-641174a2785c",
+      "title": "Top Error Root Causes",
+      "query": "AzureActivity\n| where Level == 'Error'\n| project OperationName, ResourceGroup, Caller, Region, Category\n| evaluate autocluster()",
+      "visualType": "table",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "f12f6073-ce7a-4ef3-9729-41cd88b34811",
+      "layout": {
+        "x": 0,
+        "y": 24,
+        "width": 12,
+        "height": 8
+      },
+      "usedParamVariables": [],
+      "visualOptions": {}
+    },
+    {
+      "id": "97bbb0c9-abae-48f8-a8fd-fb4f3fec2551",
+      "title": "Cities with Signal Issues",
+      "query": "PhoneTelemetry\n| make-series AvgSignal = avg(SignalStrength) default=0 on Timestamp step 5m by City\n| extend (anomalies, score, baseline) = series_decompose_anomalies(AvgSignal, 1.5)\n| mv-expand Timestamp to typeof(datetime), AvgSignal to typeof(real), anomalies to typeof(int), score to typeof(real), baseline to typeof(real)\n| where anomalies != 0\n| summarize AnomalyCount = count(), AvgAnomalyScore = round(avg(score), 2) by City\n| order by AnomalyCount desc",
+      "visualType": "table",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "f12f6073-ce7a-4ef3-9729-41cd88b34811",
+      "layout": {
+        "x": 0,
+        "y": 32,
+        "width": 12,
+        "height": 8
+      },
+      "usedParamVariables": [],
+      "visualOptions": {}
+    },
+    {
+      "id": "b362654e-43dd-4de8-bb83-5387433cbaa7",
+      "title": "Common Crash Combinations",
+      "query": "PhoneTelemetry\n| where CrashCount > 0\n| project City, OS, AppName, NetworkType\n| evaluate basket(0.05)",
+      "visualType": "table",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "f12f6073-ce7a-4ef3-9729-41cd88b34811",
+      "layout": {
+        "x": 0,
+        "y": 40,
+        "width": 12,
+        "height": 8
+      },
+      "usedParamVariables": [],
+      "visualOptions": {}
+    },
+    {
+      "id": "26c3cb41-672b-401b-8976-8223cbff25f8",
+      "title": "What Makes Errors Different?",
+      "query": "AzureActivity\n| evaluate diffpatterns(Level == 'Error', Level != 'Error')",
+      "visualType": "table",
+      "dataSourceId": "ea5e6e72-8f4b-4e81-913c-3d708b4bcebc",
+      "pageId": "f12f6073-ce7a-4ef3-9729-41cd88b34811",
+      "layout": {
+        "x": 0,
+        "y": 48,
+        "width": 12,
+        "height": 8
+      },
+      "usedParamVariables": [],
+      "visualOptions": {}
+    }
+  ]
+}

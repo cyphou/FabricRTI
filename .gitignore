@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+_*.py
+_*.json
+_*.platform
+*.pptx

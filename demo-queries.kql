@@ -1,0 +1,234 @@
+// ============================================================
+// KQL Queries for RTI Demo
+// Connect this queryset to: RTI-Demo-DB
+// ============================================================
+
+// ============================================================
+// AZURE ACTIVITY LOG QUERIES
+// ============================================================
+
+// 1. Recent activity overview
+AzureActivity
+| take 20
+
+// 2. Failed operations — what's broken?
+AzureActivity
+| where Level == "Error"
+| summarize FailureCount = count() by OperationName, ResourceGroup
+| order by FailureCount desc
+| render columnchart with (title="Failed Operations by Type")
+
+// 3. Activity timeline by severity
+AzureActivity
+| summarize EventCount = count() by bin(Timestamp, 5m), Level
+| render timechart with (title="Azure Activity Timeline")
+
+// 4. Top actors — who is making changes?
+AzureActivity
+| summarize Actions = count() by Caller
+| top 10 by Actions
+| render piechart with (title="Top 10 Active Users")
+
+// 5. Security-sensitive operations (role assignments, policy changes)
+AzureActivity
+| where OperationName has_any ("roleAssignment", "policyAssignment", "lock")
+| project Timestamp, Caller, OperationName, ResourceGroup, Region, Status
+| order by Timestamp desc
+
+// 6. Error rate KPI
+AzureActivity
+| summarize 
+    TotalOps = count(),
+    Errors = countif(Level == "Error"),
+    ErrorRate = round(100.0 * countif(Level == "Error") / count(), 1)
+
+// 6b. Activity by Azure region
+AzureActivity
+| summarize EventCount = count(), ErrorCount = countif(Level == "Error") by Region
+| order by EventCount desc
+| render columnchart with (title="Activity by Azure Region")
+
+// 6c. Operations by resource group and region
+AzureActivity
+| summarize Operations = count() by ResourceGroup, Region
+| render columnchart with (title="Operations by Resource Group and Region")
+
+
+// ============================================================
+// PHONE TELEMETRY QUERIES
+// ============================================================
+
+// 7. Latest telemetry per device
+PhoneTelemetry
+| summarize arg_max(Timestamp, *) by DeviceId
+| project DeviceId, User, City, BatteryLevel, SignalStrength, NetworkType, CpuUsage, AppName
+| order by BatteryLevel asc
+
+// 8. Battery trends over time
+PhoneTelemetry
+| summarize AvgBattery = avg(BatteryLevel) by City, bin(Timestamp, 1m)
+| render timechart with (title="Battery Level Trends by City")
+
+// 9. Low battery devices (< 20%)
+PhoneTelemetry
+| where BatteryLevel < 20
+| summarize 
+    LastSeen = max(Timestamp), 
+    AvgBattery = round(avg(BatteryLevel), 1),
+    MinBattery = round(min(BatteryLevel), 1)
+    by DeviceId, User, City
+| order by AvgBattery asc
+
+// 10. App crash report
+PhoneTelemetry
+| where CrashCount > 0
+| summarize TotalCrashes = sum(CrashCount) by AppName, OS
+| order by TotalCrashes desc
+| render columnchart with (title="App Crashes by Application")
+
+// 11. Signal strength by device over time
+PhoneTelemetry
+| summarize AvgSignal = avg(SignalStrength) by DeviceId, bin(Timestamp, 5m)
+| render timechart with (title="Signal Strength (dBm)")
+
+// 12. Device map — last known locations
+PhoneTelemetry
+| summarize arg_max(Timestamp, *) by DeviceId
+| project DeviceId, User, City, Latitude, Longitude, BatteryLevel, NetworkType
+
+// 13. Network type distribution
+PhoneTelemetry
+| summarize count() by NetworkType
+| render piechart with (title="Network Type Distribution")
+
+// 13b. Device count by city
+PhoneTelemetry
+| summarize DeviceCount = dcount(DeviceId) by City
+| order by DeviceCount desc
+| render columnchart with (title="Devices by City")
+
+// 13c. Average signal strength by city
+PhoneTelemetry
+| summarize AvgSignal = avg(SignalStrength), DeviceCount = dcount(DeviceId) by City
+| order by AvgSignal asc
+| render columnchart with (title="Signal Strength by City")
+
+// 14. CPU hotspots — devices under load
+PhoneTelemetry
+| where CpuUsage > 80
+| summarize HighCpuEvents = count(), AvgCpu = round(avg(CpuUsage), 1) by DeviceId, User, City
+| order by HighCpuEvents desc
+
+
+// ============================================================
+// COMBINED / CROSS-SOURCE QUERIES
+// ============================================================
+
+// 15. Ingestion rate monitor
+union 
+    (AzureActivity | summarize AzureEvents = count() by bin(Timestamp, 1m) | extend Source = "Azure"),
+    (PhoneTelemetry | summarize PhoneEvents = count() by bin(Timestamp, 1m) | extend Source = "Phone")
+| project Timestamp, Events = coalesce(AzureEvents, PhoneEvents), Source
+| render timechart with (title="Event Ingestion Rate")
+
+
+// ============================================================
+// ACTIVATOR-READY QUERIES (for alert rules)
+// ============================================================
+
+// 16. Error spike detection (use in Activator: count > 5 → alert)
+AzureActivity
+| where Level == "Error"
+| summarize ErrorCount = count() by bin(Timestamp, 10m)
+
+// 17. Battery critical (use in Activator: BatteryLevel < 15 → alert)
+PhoneTelemetry
+| summarize arg_max(Timestamp, *) by DeviceId
+| where BatteryLevel < 15
+| project DeviceId, User, City, BatteryLevel, Timestamp
+
+// 18. Crash burst detection (use in Activator: CrashCount > 3 per app in 5 min)
+PhoneTelemetry
+| where CrashCount > 0
+| summarize TotalCrashes = sum(CrashCount) by AppName, bin(Timestamp, 5m)
+| where TotalCrashes > 3
+
+
+// ============================================================
+// KQL MACHINE LEARNING — Built-in ML functions
+// ============================================================
+
+// 19. Anomaly Detection — Azure error spikes (auto-detects unusual patterns)
+AzureActivity
+| where Level == "Error"
+| make-series ErrorCount = count() default=0 on Timestamp step 5m
+| extend (anomalies, score, baseline) = series_decompose_anomalies(ErrorCount)
+| render anomalychart with (title="Azure Error Anomaly Detection", anomalycolumns=anomalies)
+
+// 20. Anomaly Detection — Battery drain anomalies per city
+PhoneTelemetry
+| make-series AvgBattery = avg(BatteryLevel) default=0 on Timestamp step 5m by City
+| extend (anomalies, score, baseline) = series_decompose_anomalies(AvgBattery)
+| render anomalychart with (title="Battery Level Anomalies by City", anomalycolumns=anomalies)
+
+// 21. Forecasting — Predict Azure activity volume (next 30 min)
+AzureActivity
+| make-series EventCount = count() default=0 on Timestamp step 5m
+| extend forecast = series_decompose_forecast(EventCount, 6)
+| render timechart with (title="Azure Activity Forecast (30 min ahead)")
+
+// 22. Forecasting — Battery drain prediction per city
+PhoneTelemetry
+| make-series AvgBattery = avg(BatteryLevel) default=0 on Timestamp step 5m by City
+| extend forecast = series_decompose_forecast(AvgBattery, 6)
+| render timechart with (title="Battery Level Forecast by City")
+
+// 23. Auto-clustering — What patterns cause errors?
+AzureActivity
+| where Level == "Error"
+| project OperationName, ResourceGroup, Caller, Region, Category
+| evaluate autocluster()
+
+// 24. Auto-clustering — What device/city combos have signal issues?
+PhoneTelemetry
+| where SignalStrength < -85
+| project DeviceId, City, OS, NetworkType, AppName
+| evaluate autocluster()
+
+// 25. Basket analysis — Frequent patterns in crash events
+PhoneTelemetry
+| where CrashCount > 0
+| project City, OS, AppName, NetworkType
+| evaluate basket(0.05)
+
+// 26. Time series stats — CPU usage patterns per city
+PhoneTelemetry
+| make-series AvgCpu = avg(CpuUsage) default=0 on Timestamp step 5m by City
+| extend (min_val, min_idx, max_val, max_idx, avg_val, stdev_val, variance_val) = series_stats(AvgCpu)
+| project City, min_val, max_val, avg_val = round(avg_val, 1), stdev_val = round(stdev_val, 1)
+| order by stdev_val desc
+
+// 27. Seasonal pattern detection — Activity volume cycles
+AzureActivity
+| make-series EventCount = count() default=0 on Timestamp step 1m
+| extend (periods, scores) = series_periods_detect(EventCount, 4.0, 60.0, 2)
+| project periods, scores
+
+// 28. Diff patterns — What's different between errors and successes?
+AzureActivity
+| evaluate diffpatterns(Level == "Error", Level != "Error")
+
+// 29. Signal anomaly detection — Poor coverage cities
+PhoneTelemetry
+| make-series AvgSignal = avg(SignalStrength) default=0 on Timestamp step 5m by City
+| extend (anomalies, score, baseline) = series_decompose_anomalies(AvgSignal, 1.5)
+| mv-expand Timestamp to typeof(datetime), AvgSignal to typeof(real), anomalies to typeof(int), score to typeof(real), baseline to typeof(real)
+| where anomalies != 0
+| summarize AnomalyCount = count(), AvgAnomalyScore = round(avg(score), 2) by City
+| order by AnomalyCount desc
+
+// 30. Reduce — Discover operation name patterns
+AzureActivity
+| summarize count() by OperationName
+| project OperationName
+| reduce by OperationName

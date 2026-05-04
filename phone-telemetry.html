@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RTI Phone Telemetry</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: #0f0f1a;
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 16px;
+        }
+        .header {
+            text-align: center;
+            padding: 16px 0;
+            border-bottom: 1px solid #333;
+            margin-bottom: 16px;
+        }
+        .header h1 {
+            font-size: 1.3em;
+            color: #60cdff;
+            margin-bottom: 4px;
+        }
+        .header .sub { font-size: 0.85em; color: #888; }
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            border-radius: 12px;
+            margin-bottom: 16px;
+            font-weight: 600;
+        }
+        .status-bar.stopped { background: #2a1a1a; color: #ff6b6b; }
+        .status-bar.running { background: #1a2a1a; color: #6bff6b; }
+        .status-bar .dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        .status-bar.stopped .dot { background: #ff6b6b; }
+        .status-bar.running .dot { animation: pulse 1.5s infinite; background: #6bff6b; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+        .config-section {
+            background: #1a1a2e;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .config-section h2 {
+            font-size: 0.95em;
+            color: #60cdff;
+            margin-bottom: 12px;
+        }
+        label {
+            display: block;
+            font-size: 0.8em;
+            color: #888;
+            margin-bottom: 4px;
+            margin-top: 10px;
+        }
+        label:first-of-type { margin-top: 0; }
+        input, select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #333;
+            border-radius: 8px;
+            background: #0f0f1a;
+            color: #e0e0e0;
+            font-size: 0.95em;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #60cdff;
+        }
+        .btn {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 12px;
+            font-size: 1.1em;
+            font-weight: 700;
+            cursor: pointer;
+            margin-bottom: 12px;
+            transition: transform 0.1s;
+        }
+        .btn:active { transform: scale(0.97); }
+        .btn-start { background: #2563eb; color: white; }
+        .btn-stop { background: #dc2626; color: white; }
+        .btn-test { background: #333; color: #60cdff; border: 1px solid #60cdff; }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        .metric {
+            background: #1a1a2e;
+            border-radius: 12px;
+            padding: 14px;
+            text-align: center;
+        }
+        .metric .value {
+            font-size: 1.6em;
+            font-weight: 700;
+            color: #60cdff;
+        }
+        .metric .label {
+            font-size: 0.75em;
+            color: #888;
+            margin-top: 4px;
+        }
+        .metric.warning .value { color: #fbbf24; }
+        .metric.critical .value { color: #ff6b6b; }
+
+        .log {
+            background: #0a0a14;
+            border-radius: 12px;
+            padding: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'Cascadia Code', 'Consolas', monospace;
+            font-size: 0.75em;
+            line-height: 1.6;
+        }
+        .log .entry { border-bottom: 1px solid #1a1a2e; padding: 2px 0; }
+        .log .ts { color: #666; }
+        .log .ok { color: #6bff6b; }
+        .log .err { color: #ff6b6b; }
+
+        .permissions {
+            background: #2a2a1a;
+            border: 1px solid #554400;
+            border-radius: 12px;
+            padding: 12px 16px;
+            margin-bottom: 16px;
+            font-size: 0.85em;
+        }
+        .permissions button {
+            background: #60cdff;
+            color: #000;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>📱 RTI Phone Telemetry</h1>
+    <div class="sub">Sends real device data to Azure Event Hub</div>
+</div>
+
+<div id="statusBar" class="status-bar stopped">
+    <span><span class="dot"></span><span id="statusText">Stopped</span></span>
+    <span id="eventCount">0 events</span>
+</div>
+
+<div class="config-section" id="configSection">
+    <h2>⚙️ Configuration</h2>
+    <label>Event Hub Namespace (e.g., eh-rti-demo)</label>
+    <input type="text" id="namespace" placeholder="eh-rti-demo">
+
+    <label>Event Hub Name</label>
+    <input type="text" id="eventhub" value="phone-telemetry">
+
+    <label>SAS Policy Name</label>
+    <input type="text" id="sasName" value="RootManageSharedAccessKey">
+
+    <label>SAS Key</label>
+    <input type="password" id="sasKey" placeholder="Paste your SAS key here">
+
+    <label>Device Name</label>
+    <input type="text" id="deviceName" placeholder="e.g. Pierre-iPhone">
+
+    <label>Send Interval (seconds)</label>
+    <select id="interval">
+        <option value="3" selected>3 seconds</option>
+        <option value="5">5 seconds</option>
+        <option value="10">10 seconds</option>
+        <option value="30">30 seconds</option>
+    </select>
+</div>
+
+<div class="permissions" id="permBanner" style="display:none;">
+    ⚠️ Location access needed for GPS coordinates.
+    <br><button onclick="requestPermissions()">Grant Permissions</button>
+</div>
+
+<div class="metrics">
+    <div class="metric" id="mBattery">
+        <div class="value">--</div>
+        <div class="label">🔋 Battery</div>
+    </div>
+    <div class="metric" id="mSignal">
+        <div class="value">--</div>
+        <div class="label">📶 Network</div>
+    </div>
+    <div class="metric" id="mLat">
+        <div class="value">--</div>
+        <div class="label">📍 Latitude</div>
+    </div>
+    <div class="metric" id="mLon">
+        <div class="value">--</div>
+        <div class="label">📍 Longitude</div>
+    </div>
+</div>
+
+<button class="btn btn-test" onclick="sendTestEvent()">🧪 Send Test Event</button>
+<button class="btn btn-start" id="btnStart" onclick="startSending()">▶ Start Streaming</button>
+<button class="btn btn-stop" id="btnStop" onclick="stopSending()" style="display:none;">⏹ Stop</button>
+
+<div class="log" id="log">
+    <div class="entry"><span class="ts">Ready</span> — Configure Event Hub and press Start</div>
+</div>
+
+<script>
+    // ============================================================
+    // State
+    // ============================================================
+    let sendTimer = null;
+    let totalEvents = 0;
+    let currentLat = null;
+    let currentLon = null;
+    let batteryLevel = null;
+    let batteryCharging = false;
+    let geoWatchId = null;
+
+    // ============================================================
+    // Permissions & Sensors
+    // ============================================================
+    async function initSensors() {
+        // Battery API
+        if ('getBattery' in navigator) {
+            try {
+                const battery = await navigator.getBattery();
+                batteryLevel = Math.round(battery.level * 100);
+                batteryCharging = battery.charging;
+                battery.addEventListener('levelchange', () => {
+                    batteryLevel = Math.round(battery.level * 100);
+                    updateMetrics();
+                });
+                battery.addEventListener('chargingchange', () => {
+                    batteryCharging = battery.charging;
+                });
+            } catch (e) {
+                log('Battery API unavailable', 'err');
+            }
+        }
+
+        // Geolocation
+        if ('geolocation' in navigator) {
+            try {
+                geoWatchId = navigator.geolocation.watchPosition(
+                    (pos) => {
+                        currentLat = pos.coords.latitude;
+                        currentLon = pos.coords.longitude;
+                        updateMetrics();
+                        document.getElementById('permBanner').style.display = 'none';
+                    },
+                    (err) => {
+                        log('Geolocation error: ' + err.message, 'err');
+                        document.getElementById('permBanner').style.display = 'block';
+                    },
+                    { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
+                );
+            } catch (e) {
+                document.getElementById('permBanner').style.display = 'block';
+            }
+        }
+    }
+
+    function requestPermissions() {
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                currentLat = pos.coords.latitude;
+                currentLon = pos.coords.longitude;
+                document.getElementById('permBanner').style.display = 'none';
+                updateMetrics();
+                initSensors();
+            },
+            (err) => log('Permission denied: ' + err.message, 'err'),
+            { enableHighAccuracy: true }
+        );
+    }
+
+    function updateMetrics() {
+        const bEl = document.getElementById('mBattery');
+        if (batteryLevel !== null) {
+            bEl.querySelector('.value').textContent = batteryLevel + '%';
+            bEl.className = 'metric' + (batteryLevel < 15 ? ' critical' : batteryLevel < 30 ? ' warning' : '');
+        }
+
+        const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        const netType = conn ? conn.effectiveType || conn.type || 'unknown' : 'unknown';
+        document.getElementById('mSignal').querySelector('.value').textContent = netType.toUpperCase();
+
+        if (currentLat !== null) {
+            document.getElementById('mLat').querySelector('.value').textContent = currentLat.toFixed(4);
+            document.getElementById('mLon').querySelector('.value').textContent = currentLon.toFixed(4);
+        }
+    }
+
+    // ============================================================
+    // SAS Token Generation (HMAC-SHA256)
+    // ============================================================
+    async function generateSasToken(namespace, eventhub, sasName, sasKey) {
+        const uri = encodeURIComponent(`https://${namespace}.servicebus.windows.net/${eventhub}`);
+        const ttl = Math.floor(Date.now() / 1000) + 3600; // 1 hour
+        const stringToSign = `${uri}\n${ttl}`;
+
+        // Import key for HMAC
+        const keyData = Uint8Array.from(atob(sasKey), c => c.charCodeAt(0));
+        const cryptoKey = await crypto.subtle.importKey(
+            'raw', keyData, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+        );
+
+        // Sign
+        const encoder = new TextEncoder();
+        const signature = await crypto.subtle.sign('HMAC', cryptoKey, encoder.encode(stringToSign));
+        const sig = encodeURIComponent(btoa(String.fromCharCode(...new Uint8Array(signature))));
+
+        return `SharedAccessSignature sr=${uri}&sig=${sig}&se=${ttl}&skn=${sasName}`;
+    }
+
+    // ============================================================
+    // Build Telemetry Event
+    // ============================================================
+    function buildEvent() {
+        const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        const ua = navigator.userAgent;
+        let os = 'Unknown';
+        if (/iPhone|iPad/.test(ua)) os = 'iOS';
+        else if (/Android/.test(ua)) os = 'Android';
+        else if (/Windows/.test(ua)) os = 'Windows';
+        else if (/Mac/.test(ua)) os = 'macOS';
+
+        return {
+            DeviceId: document.getElementById('deviceName').value || 'WebPhone-001',
+            User: 'DemoUser',
+            OS: os,
+            BatteryLevel: batteryLevel !== null ? batteryLevel : Math.round(Math.random() * 100),
+            BatteryCharging: batteryCharging,
+            SignalStrength: conn ? (conn.downlink ? Math.round(-110 + conn.downlink * 10) : -75) : -75,
+            Latitude: currentLat !== null ? Math.round(currentLat * 1000000) / 1000000 : 48.8566,
+            Longitude: currentLon !== null ? Math.round(currentLon * 1000000) / 1000000 : 2.3522,
+            AppName: 'RTI-Telemetry',
+            CpuUsage: Math.round(Math.random() * 80 + 10),
+            MemoryUsageMB: Math.round(Math.random() * 2000 + 500),
+            CrashCount: 0,
+            NetworkType: conn ? (conn.effectiveType || conn.type || 'unknown').toUpperCase() : 'Unknown',
+            ScreenWidth: screen.width,
+            ScreenHeight: screen.height,
+            UserAgent: ua.substring(0, 100),
+            Timestamp: new Date().toISOString()
+        };
+    }
+
+    // ============================================================
+    // Send Event to Event Hub (REST API)
+    // ============================================================
+    async function sendEvent() {
+        const namespace = document.getElementById('namespace').value.trim();
+        const eventhub = document.getElementById('eventhub').value.trim();
+        const sasName = document.getElementById('sasName').value.trim();
+        const sasKey = document.getElementById('sasKey').value.trim();
+
+        if (!namespace || !eventhub || !sasName || !sasKey) {
+            log('Missing configuration', 'err');
+            return false;
+        }
+
+        try {
+            const token = await generateSasToken(namespace, eventhub, sasName, sasKey);
+            const event = buildEvent();
+            const url = `https://${namespace}.servicebus.windows.net/${eventhub}/messages`;
+
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': token,
+                    'Content-Type': 'application/json',
+                    'BrokerProperties': JSON.stringify({ PartitionKey: event.DeviceId })
+                },
+                body: JSON.stringify(event)
+            });
+
+            if (resp.status === 201) {
+                totalEvents++;
+                document.getElementById('eventCount').textContent = totalEvents + ' events';
+                updateMetrics();
+                log(`Sent: Battery=${event.BatteryLevel}% GPS=${event.Latitude.toFixed(4)},${event.Longitude.toFixed(4)} Net=${event.NetworkType}`, 'ok');
+                return true;
+            } else {
+                const text = await resp.text();
+                log(`HTTP ${resp.status}: ${text.substring(0, 80)}`, 'err');
+                return false;
+            }
+        } catch (e) {
+            log('Error: ' + e.message, 'err');
+            return false;
+        }
+    }
+
+    // ============================================================
+    // Controls
+    // ============================================================
+    async function sendTestEvent() {
+        log('Sending test event...', '');
+        await sendEvent();
+    }
+
+    function startSending() {
+        const interval = parseInt(document.getElementById('interval').value) * 1000;
+        document.getElementById('btnStart').style.display = 'none';
+        document.getElementById('btnStop').style.display = 'block';
+        document.getElementById('configSection').style.display = 'none';
+        const bar = document.getElementById('statusBar');
+        bar.className = 'status-bar running';
+        document.getElementById('statusText').textContent = 'Streaming';
+
+        sendEvent(); // send immediately
+        sendTimer = setInterval(sendEvent, interval);
+        log(`Started streaming every ${interval / 1000}s`, 'ok');
+    }
+
+    function stopSending() {
+        clearInterval(sendTimer);
+        sendTimer = null;
+        document.getElementById('btnStart').style.display = 'block';
+        document.getElementById('btnStop').style.display = 'none';
+        document.getElementById('configSection').style.display = 'block';
+        const bar = document.getElementById('statusBar');
+        bar.className = 'status-bar stopped';
+        document.getElementById('statusText').textContent = 'Stopped';
+        log('Stopped streaming', 'err');
+    }
+
+    function log(msg, type) {
+        const el = document.getElementById('log');
+        const ts = new Date().toLocaleTimeString();
+        const cls = type === 'ok' ? 'ok' : type === 'err' ? 'err' : '';
+        el.innerHTML = `<div class="entry"><span class="ts">${ts}</span> <span class="${cls}">${msg}</span></div>` + el.innerHTML;
+        // Keep last 50 entries
+        while (el.children.length > 50) el.removeChild(el.lastChild);
+    }
+
+    // ============================================================
+    // Load saved config from localStorage
+    // ============================================================
+    function loadConfig() {
+        ['namespace', 'eventhub', 'sasName', 'deviceName', 'interval'].forEach(id => {
+            const saved = localStorage.getItem('rti_' + id);
+            if (saved) document.getElementById(id).value = saved;
+        });
+        // SAS key stored only in session
+        const sk = sessionStorage.getItem('rti_sasKey');
+        if (sk) document.getElementById('sasKey').value = sk;
+    }
+
+    function saveConfig() {
+        ['namespace', 'eventhub', 'sasName', 'deviceName', 'interval'].forEach(id => {
+            localStorage.setItem('rti_' + id, document.getElementById(id).value);
+        });
+        sessionStorage.setItem('rti_sasKey', document.getElementById('sasKey').value);
+    }
+
+    // Auto-save on input change
+    document.querySelectorAll('input, select').forEach(el => {
+        el.addEventListener('change', saveConfig);
+    });
+
+    // Init
+    loadConfig();
+    initSensors();
+</script>
+
+</body>
+</html>
