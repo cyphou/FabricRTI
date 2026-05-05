@@ -1,0 +1,123 @@
+// ============================================================
+// Teams Issue Detection — Bronze Tables (Raw Ingestion)
+// 4 new tables: TeamsCallQuality, NetworkProbe, DeviceHealth, M365ServiceHealth
+// ============================================================
+
+// --- Teams Call Quality (per-call / per-segment) ---
+.create-merge table TeamsCallQuality (
+    Timestamp: datetime,
+    CallId: string,
+    UserUPN: string,
+    DeviceId: string,
+    CallType: string,          // P2P, GroupCall, PSTN, Meeting
+    MediaType: string,         // Audio, Video, ScreenShare
+    Direction: string,         // Inbound, Outbound
+    Duration: int,             // seconds
+    // Audio metrics
+    AudioJitter: real,         // ms
+    AudioPacketLoss: real,     // percentage
+    AudioRTT: real,            // ms round-trip time
+    AudioCodec: string,        // OPUS, SILK, SATIN
+    // Video metrics
+    VideoFrameRate: real,      // fps
+    VideoResolution: string,   // 1080p, 720p, 480p, 360p
+    VideoPacketLoss: real,     // percentage
+    // Network context
+    NetworkType: string,       // WiFi, Ethernet, Cellular
+    SubnetId: string,
+    LocalIP: string,
+    ReflexiveIP: string,
+    MediaPath: string,         // Direct, Relay, TURN
+    VPNActive: bool,
+    // Device context
+    DeviceCPU: real,           // percentage during call
+    DeviceRAM: real,           // percentage during call
+    Peripheral: string,        // Headset, Speaker, Bluetooth, Builtin
+    PeripheralModel: string,
+    // Quality verdict
+    QualityScore: real,        // 1.0-5.0 MOS-like score
+    QualityLabel: string,      // Good, Acceptable, Poor
+    FailureReason: string,     // empty if successful
+    City: string,
+    Building: string,
+    Floor: string
+)
+
+// --- Network Probe (per-minute synthetic probes) ---
+.create-merge table NetworkProbe (
+    Timestamp: datetime,
+    ProbeId: string,
+    SubnetId: string,
+    Building: string,
+    Floor: string,
+    City: string,
+    // Connectivity to Teams relays
+    TargetEndpoint: string,     // teams.microsoft.com, relay IP, etc.
+    RTT: real,                  // ms
+    PacketLoss: real,           // percentage
+    Jitter: real,               // ms
+    Bandwidth: real,            // Mbps measured
+    // DNS
+    DNSResolutionMs: real,
+    // Wi-Fi
+    SSID: string,
+    RSSI: int,                 // dBm
+    WiFiChannel: int,
+    WiFiInterference: real,    // percentage
+    // WAN / proxy
+    ProxyLatency: real,        // ms (0 if direct)
+    VPNLatency: real,          // ms (0 if no VPN)
+    ISP: string,
+    // Status
+    ProbeResult: string        // Success, Timeout, DNSFail, HighLatency
+)
+
+// --- Device Health (endpoint telemetry every 1-5 min) ---
+.create-merge table DeviceHealth (
+    Timestamp: datetime,
+    DeviceId: string,
+    UserUPN: string,
+    DeviceName: string,
+    DeviceType: string,        // Laptop, Desktop, Phone, MeetingRoom
+    // Hardware
+    CPU: real,
+    RAM: real,                 // percentage
+    DiskFree: real,            // GB
+    GPUUsage: real,            // percentage
+    // Software
+    OSVersion: string,
+    TeamsVersion: string,
+    TeamsProcess: string,      // Running, NotRunning, Crashed
+    AudioDriverVersion: string,
+    AudioDriverStatus: string, // OK, Outdated, Missing
+    // Peripheral
+    PeripheralConnected: bool,
+    PeripheralType: string,    // Headset, Speaker, Bluetooth, None
+    PeripheralModel: string,
+    CameraConnected: bool,
+    // Network adapter
+    NetworkAdapter: string,    // WiFi, Ethernet
+    AdapterSpeed: int,         // Mbps
+    // Location
+    City: string,
+    Building: string,
+    Floor: string,
+    SubnetId: string
+)
+
+// --- M365 Service Health (ingested from Graph API or simulated) ---
+.create-merge table M365ServiceHealth (
+    Timestamp: datetime,
+    IncidentId: string,
+    ServiceName: string,       // MicrosoftTeams, Exchange, SharePoint, etc.
+    Status: string,            // ServiceOperational, ServiceDegradation, ServiceInterruption, InvestigatingIssue
+    Severity: string,          // Sev0, Sev1, Sev2
+    Title: string,
+    ImpactDescription: string,
+    Classification: string,    // Incident, Advisory, Maintenance
+    StartTime: datetime,
+    EndTime: datetime,         // empty if ongoing
+    AffectedRegions: string,   // comma-separated
+    AffectedUsers: int,        // estimated
+    IsResolved: bool
+)

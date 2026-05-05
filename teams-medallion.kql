@@ -1,0 +1,250 @@
+// ============================================================
+// Teams Monitoring — Medallion Architecture (Silver + Gold)
+// Cross-layer correlation for Teams issue detection
+// ============================================================
+// Run AFTER teams-schema.kql and data starts flowing.
+// ============================================================
+
+// ============================================================
+// SILVER LAYER — Cleaned, enriched tables via update policies
+// ============================================================
+
+// --- Silver: Call Quality ---
+.create-merge table silver_TeamsCallQuality (
+    Timestamp: datetime,
+    CallId: string,
+    UserUPN: string,
+    DeviceId: string,
+    CallType: string,
+    MediaType: string,
+    Duration: int,
+    AudioJitter: real,
+    AudioPacketLoss: real,
+    AudioRTT: real,
+    VideoFrameRate: real,
+    VideoResolution: string,
+    NetworkType: string,
+    SubnetId: string,
+    MediaPath: string,
+    VPNActive: bool,
+    DeviceCPU: real,
+    DeviceRAM: real,
+    Peripheral: string,
+    QualityScore: real,
+    QualityLabel: string,
+    FailureReason: string,
+    City: string,
+    Building: string,
+    Floor: string,
+    // Enriched fields
+    IsCallFailed: bool,
+    IsPoorQuality: bool,
+    JitterCategory: string,
+    LatencyCategory: string,
+    IssueLayer: string         // Device, Network, Server, Unknown, None
+)
+
+.create-or-alter function fn_SilverTeamsCallQuality() {
+    TeamsCallQuality
+    | extend
+        IsCallFailed = isnotempty(FailureReason),
+        IsPoorQuality = QualityScore < 2.5,
+        JitterCategory = case(
+            AudioJitter <= 10, "Excellent",
+            AudioJitter <= 20, "Good",
+            AudioJitter <= 30, "Acceptable",
+            "Poor"
+        ),
+        LatencyCategory = case(
+            AudioRTT <= 50, "Excellent",
+            AudioRTT <= 100, "Good",
+            AudioRTT <= 200, "Acceptable",
+            "Poor"
+        ),
+        // Rule-based root cause classification
+        IssueLayer = case(
+            FailureReason has "Server" or FailureReason has "Setup", "Server",
+            FailureReason has "Crash", "Device",
+            DeviceCPU > 90 or DeviceRAM > 95, "Device",
+            AudioJitter > 30 or AudioPacketLoss > 5 or AudioRTT > 200, "Network",
+            QualityScore < 2.5 and DeviceCPU < 70 and AudioJitter < 20, "Server",
+            QualityScore < 3.5, "Unknown",
+            "None"
+        )
+    | project
+        Timestamp, CallId, UserUPN, DeviceId, CallType, MediaType, Duration,
+        AudioJitter, AudioPacketLoss, AudioRTT, VideoFrameRate, VideoResolution,
+        NetworkType, SubnetId, MediaPath, VPNActive, DeviceCPU, DeviceRAM,
+        Peripheral, QualityScore, QualityLabel, FailureReason,
+        City, Building, Floor,
+        IsCallFailed, IsPoorQuality, JitterCategory, LatencyCategory, IssueLayer
+}
+
+.alter table silver_TeamsCallQuality policy update
+@'[{"IsEnabled":true,"Source":"TeamsCallQuality","Query":"fn_SilverTeamsCallQuality","IsTransactional":false,"PropagateIngestionProperties":true}]'
+
+
+// --- Silver: Network Probe ---
+.create-merge table silver_NetworkProbe (
+    Timestamp: datetime,
+    ProbeId: string,
+    SubnetId: string,
+    Building: string,
+    Floor: string,
+    City: string,
+    TargetEndpoint: string,
+    RTT: real,
+    PacketLoss: real,
+    Jitter: real,
+    Bandwidth: real,
+    DNSResolutionMs: real,
+    RSSI: int,
+    WiFiInterference: real,
+    ProxyLatency: real,
+    VPNLatency: real,
+    ISP: string,
+    ProbeResult: string,
+    // Enriched
+    NetworkHealth: string,
+    WiFiHealth: string,
+    IsProbeFailure: bool
+)
+
+.create-or-alter function fn_SilverNetworkProbe() {
+    NetworkProbe
+    | extend
+        NetworkHealth = case(
+            PacketLoss > 5 or RTT > 150 or Jitter > 30, "Critical",
+            PacketLoss > 2 or RTT > 100 or Jitter > 20, "Degraded",
+            PacketLoss > 1 or RTT > 50 or Jitter > 10, "Fair",
+            "Healthy"
+        ),
+        WiFiHealth = case(
+            RSSI > -50, "Excellent",
+            RSSI > -60, "Good",
+            RSSI > -70, "Fair",
+            RSSI > -80, "Poor",
+            "Critical"
+        ),
+        IsProbeFailure = ProbeResult != "Success"
+    | project
+        Timestamp, ProbeId, SubnetId, Building, Floor, City,
+        TargetEndpoint, RTT, PacketLoss, Jitter, Bandwidth,
+        DNSResolutionMs, RSSI, WiFiInterference, ProxyLatency, VPNLatency,
+        ISP, ProbeResult,
+        NetworkHealth, WiFiHealth, IsProbeFailure
+}
+
+.alter table silver_NetworkProbe policy update
+@'[{"IsEnabled":true,"Source":"NetworkProbe","Query":"fn_SilverNetworkProbe","IsTransactional":false,"PropagateIngestionProperties":true}]'
+
+
+// --- Silver: Device Health ---
+.create-merge table silver_DeviceHealth (
+    Timestamp: datetime,
+    DeviceId: string,
+    UserUPN: string,
+    DeviceName: string,
+    DeviceType: string,
+    CPU: real,
+    RAM: real,
+    DiskFree: real,
+    GPUUsage: real,
+    OSVersion: string,
+    TeamsVersion: string,
+    TeamsProcess: string,
+    AudioDriverStatus: string,
+    PeripheralConnected: bool,
+    PeripheralType: string,
+    PeripheralModel: string,
+    CameraConnected: bool,
+    NetworkAdapter: string,
+    City: string,
+    Building: string,
+    Floor: string,
+    SubnetId: string,
+    // Enriched
+    DeviceHealthScore: string,
+    HasDriverIssue: bool,
+    HasPeripheralIssue: bool,
+    IsTeamsCrashed: bool
+)
+
+.create-or-alter function fn_SilverDeviceHealth() {
+    DeviceHealth
+    | extend
+        DeviceHealthScore = case(
+            TeamsProcess == "Crashed" or CPU > 95 or RAM > 95, "Critical",
+            AudioDriverStatus != "OK" or not(PeripheralConnected) or CPU > 85, "Warning",
+            CPU > 70 or RAM > 80, "Fair",
+            "Healthy"
+        ),
+        HasDriverIssue = AudioDriverStatus != "OK",
+        HasPeripheralIssue = not(PeripheralConnected),
+        IsTeamsCrashed = TeamsProcess == "Crashed"
+    | project
+        Timestamp, DeviceId, UserUPN, DeviceName, DeviceType,
+        CPU, RAM, DiskFree, GPUUsage, OSVersion, TeamsVersion, TeamsProcess,
+        AudioDriverStatus, PeripheralConnected, PeripheralType, PeripheralModel,
+        CameraConnected, NetworkAdapter, City, Building, Floor, SubnetId,
+        DeviceHealthScore, HasDriverIssue, HasPeripheralIssue, IsTeamsCrashed
+}
+
+.alter table silver_DeviceHealth policy update
+@'[{"IsEnabled":true,"Source":"DeviceHealth","Query":"fn_SilverDeviceHealth","IsTransactional":false,"PropagateIngestionProperties":true}]'
+
+
+// ============================================================
+// GOLD LAYER — Aggregated views for real-time dashboards
+// ============================================================
+
+// --- Call quality by building (for heatmap) ---
+.create materialized-view with (backfill=true) gold_CallQualityByBuilding on table silver_TeamsCallQuality {
+    silver_TeamsCallQuality
+    | summarize
+        TotalCalls = count(),
+        PoorCalls = countif(IsPoorQuality),
+        FailedCalls = countif(IsCallFailed),
+        AvgScore = avg(QualityScore),
+        AvgJitter = avg(AudioJitter),
+        AvgLoss = avg(AudioPacketLoss),
+        AvgRTT = avg(AudioRTT),
+        LastSeen = max(Timestamp)
+        by Building, City, Floor
+}
+
+// --- Issue origin distribution (Device vs Network vs Server) ---
+.create materialized-view with (backfill=true) gold_IssueOriginSummary on table silver_TeamsCallQuality {
+    silver_TeamsCallQuality
+    | where IssueLayer != "None"
+    | summarize
+        IssueCount = count(),
+        AffectedUsers = dcount(UserUPN),
+        LastSeen = max(Timestamp)
+        by IssueLayer, Building, City
+}
+
+// --- Network health by subnet ---
+.create materialized-view with (backfill=true) gold_NetworkHealthBySubnet on table silver_NetworkProbe {
+    silver_NetworkProbe
+    | summarize
+        ProbeCount = count(),
+        Failures = countif(IsProbeFailure),
+        AvgRTT = avg(RTT),
+        AvgLoss = avg(PacketLoss),
+        AvgJitter = avg(Jitter),
+        AvgRSSI = avg(RSSI),
+        AvgBandwidth = avg(Bandwidth),
+        LastSeen = max(Timestamp)
+        by SubnetId, Building, City, ISP, NetworkHealth
+}
+
+// --- Device health overview ---
+.create materialized-view with (backfill=true) gold_DeviceHealthOverview on table silver_DeviceHealth {
+    silver_DeviceHealth
+    | summarize
+        arg_max(Timestamp, *) by DeviceId
+}
+
+// --- M365 incidents (latest per incident) ---
+// Note: M365ServiceHealth is low-volume, no materialized view needed — direct queries suffice.

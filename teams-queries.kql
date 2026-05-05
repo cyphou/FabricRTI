@@ -1,0 +1,293 @@
+// ============================================================
+// Teams Issue Detection — Correlation & Root Cause Queries
+// ============================================================
+// These queries demonstrate why simple thresholds fail and
+// why cross-layer correlation (RTI + Data Agent) is essential.
+// Each query targets a specific subtle anomaly scenario.
+// ============================================================
+
+
+// ============================================================
+// 1. OVERVIEW — Looks healthy... or does it?
+// ============================================================
+
+// --- 1.1 Building Health Matrix (all green until you dig deeper) ---
+let t = ago(10m);
+let calls = silver_TeamsCallQuality | where Timestamp > t
+| summarize Score=round(avg(QualityScore),1), PoorPct=round(100.0*countif(IsPoorQuality)/count(),1),
+            FailPct=round(100.0*countif(IsCallFailed)/count(),1), Calls=count() by Building;
+let net = silver_NetworkProbe | where Timestamp > t
+| summarize NetRTT=round(avg(RTT),0), NetLoss=round(avg(PacketLoss),1), Probes=count() by Building;
+let dev = silver_DeviceHealth | where Timestamp > t
+| summarize DevCPU=round(avg(CPU),0), DevGPU=round(avg(GPUUsage),0) by Building;
+calls
+| join kind=leftouter net on Building
+| join kind=leftouter dev on Building
+| project Building, Score, PoorPct, FailPct, Calls, NetRTT, NetLoss, DevCPU, DevGPU
+// Note: Most buildings show green — subtle issues hide in aggregates
+
+// --- 1.2 Issue Origin Distribution (enriched by silver layer) ---
+silver_TeamsCallQuality
+| where Timestamp > ago(15m) and IssueLayer != "None"
+| summarize Count = count() by IssueLayer
+| render piechart with (title="Issue Root Cause Distribution")
+
+
+// ============================================================
+// 2. THERMAL THROTTLE (Scenario 1)
+// CPU never exceeds 85%, but video degrades over time in long calls
+// The ONLY way to detect: correlate Duration + GPU trend + FPS trend
+// ============================================================
+
+// --- 2.1 Find users with FPS degradation in long calls ---
+silver_TeamsCallQuality
+| where Timestamp > ago(30m) and MediaType == "Video" and Duration > 300
+| order by Timestamp asc
+| partition by CallId (
+    summarize 
+        UserUPN = take_any(UserUPN),
+        Building = take_any(Building),
+        FirstFPS = percentile(VideoFrameRate, 90),
+        LastFPS = percentile(VideoFrameRate, 10),
+        Duration = max(Duration),
+        DeviceCPU = avg(DeviceCPU)
+)
+| where FirstFPS > 22 and LastFPS < 18
+| extend FPS_Drop = round(FirstFPS - LastFPS, 1)
+| project UserUPN, Building, Duration, DeviceCPU=round(DeviceCPU,0), FirstFPS=round(FirstFPS,0), LastFPS=round(LastFPS,0), FPS_Drop
+| order by FPS_Drop desc
+
+// --- 2.2 GPU vs FPS correlation over time ---
+silver_DeviceHealth
+| where Timestamp > ago(30m)
+| join kind=inner (
+    silver_TeamsCallQuality | where Timestamp > ago(30m) and MediaType == "Video"
+    | project UserUPN, CallTimestamp=Timestamp, VideoFrameRate
+) on UserUPN
+| where abs(datetime_diff('second', Timestamp, CallTimestamp)) < 15
+| summarize AvgGPU=round(avg(GPUUsage),0), AvgFPS=round(avg(VideoFrameRate),0) by UserUPN, bin(Timestamp, 1m)
+| order by Timestamp asc
+
+
+// ============================================================
+// 3. ISP PEERING (Scenario 2)
+// Average RTT per building barely moves. But ONE relay endpoint
+// is slow for ONE ISP. Need per-endpoint × per-ISP breakdown.
+// ============================================================
+
+// --- 3.1 RTT by ISP × Relay (reveals the outlier) ---
+silver_NetworkProbe
+| where Timestamp > ago(15m)
+| summarize AvgRTT=round(avg(RTT),1), P95RTT=round(percentile(RTT,95),1), Probes=count()
+    by ISP, TargetEndpoint
+| order by AvgRTT desc
+// Look for one ISP+endpoint combo with RTT >> others
+
+// --- 3.2 Buildings affected (only those with the degraded ISP) ---
+silver_NetworkProbe
+| where Timestamp > ago(15m)
+| summarize AvgRTT=round(avg(RTT),1) by Building, ISP, TargetEndpoint
+| join kind=inner (
+    silver_NetworkProbe | where Timestamp > ago(15m)
+    | summarize GlobalAvg=avg(RTT) by TargetEndpoint
+) on TargetEndpoint
+| where AvgRTT > GlobalAvg * 1.3
+| project Building, ISP, TargetEndpoint, AvgRTT, GlobalAvg=round(GlobalAvg,1), Ratio=round(AvgRTT/GlobalAvg,1)
+
+
+// ============================================================
+// 4. WIFI CONTENTION (Scenario 3)
+// Average RSSI looks fine. Need to check 2.4GHz vs 5GHz variance
+// on a per-floor basis. Intermittent: only 30% of probes show dip.
+// ============================================================
+
+// --- 4.1 RSSI variance by frequency band per floor ---
+silver_NetworkProbe
+| where Timestamp > ago(15m)
+| extend FreqBand = iff(WiFiChannel in (1, 6, 11), "2.4GHz", "5GHz")
+| summarize AvgRSSI=round(avg(RSSI),0), StdRSSI=round(stdev(RSSI),1),
+            AvgInterf=round(avg(WiFiInterference),1), Probes=count()
+    by Building, Floor, FreqBand
+| order by StdRSSI desc
+// High StdRSSI on 2.4GHz + low StdRSSI on 5GHz = contention
+
+// --- 4.2 WiFi users vs Ethernet users quality on same floor ---
+silver_TeamsCallQuality
+| where Timestamp > ago(15m)
+| summarize AvgScore=round(avg(QualityScore),2), Count=count()
+    by Building, Floor, NetworkType
+| evaluate pivot(NetworkType, avg(AvgScore), sum(Count))
+// WiFi score << Ethernet score on affected floor
+
+
+// ============================================================
+// 5. VPN MEDIA BYPASS (Scenario 4)
+// Network probes show VPN is fine. But call RTT is much higher.
+// Compare probe RTT vs call RTT for VPN users — gap = tunnel routing.
+// ============================================================
+
+// --- 5.1 Probe RTT vs Call RTT comparison ---
+let probeBySubnet = silver_NetworkProbe
+| where Timestamp > ago(15m)
+| summarize ProbeRTT=round(avg(RTT),1), ProbeP95=round(percentile(RTT,95),1) by SubnetId;
+let callBySubnet = silver_TeamsCallQuality
+| where Timestamp > ago(15m) and VPNActive
+| summarize CallRTT=round(avg(AudioRTT),1), CallP95=round(percentile(AudioRTT,95),1), Calls=count() by SubnetId;
+probeBySubnet
+| join kind=inner callBySubnet on SubnetId
+| extend RTT_Gap = round(CallRTT - ProbeRTT, 1)
+| project SubnetId, ProbeRTT, CallRTT, RTT_Gap, Calls
+| where RTT_Gap > 20
+// RTT_Gap > 25ms strongly suggests media bypass failure
+
+// --- 5.2 VPN vs Direct quality comparison ---
+silver_TeamsCallQuality
+| where Timestamp > ago(30m)
+| summarize AvgScore=round(avg(QualityScore),2), AvgRTT=round(avg(AudioRTT),0),
+            PoorPct=round(100.0*countif(IsPoorQuality)/count(),1), Calls=count()
+    by VPN=iff(VPNActive, "VPN", "Direct")
+
+
+// ============================================================
+// 6. DNS INTERMITTENT (Scenario 5)
+// Average DNS looks fine (15→22ms). P95 spikes to 200ms.
+// Call failures correlate with DNS P95 spikes — same building, same time.
+// ============================================================
+
+// --- 6.1 DNS percentile analysis by building ---
+silver_NetworkProbe
+| where Timestamp > ago(15m)
+| summarize Avg=round(avg(DNSResolutionMs),1), P50=round(percentile(DNSResolutionMs,50),1),
+            P95=round(percentile(DNSResolutionMs,95),1), P99=round(percentile(DNSResolutionMs,99),1)
+    by Building
+| order by P95 desc
+// Look for building where Avg is OK but P95 >> normal
+
+// --- 6.2 Call failures correlated with DNS spikes ---
+let dnsSpikes = silver_NetworkProbe
+| where Timestamp > ago(30m)
+| summarize P95DNS=percentile(DNSResolutionMs,95) by Building, TimeBin=bin(Timestamp, 2m)
+| where P95DNS > 60;
+let failures = silver_TeamsCallQuality
+| where Timestamp > ago(30m) and IsCallFailed
+| summarize Failures=count() by Building, TimeBin=bin(Timestamp, 2m);
+dnsSpikes
+| join kind=inner failures on Building, TimeBin
+| project TimeBin, Building, P95DNS=round(P95DNS,0), Failures
+| order by TimeBin desc
+
+
+// ============================================================
+// 7. DRIVER REGRESSION (Scenario 6)
+// Random-looking quality issues. Only grouping by the exact
+// (DriverVersion × PeripheralModel) combination reveals the pattern.
+// ============================================================
+
+// --- 7.1 Quality by Driver + Peripheral matrix ---
+silver_TeamsCallQuality
+| where Timestamp > ago(30m)
+| join kind=inner (
+    silver_DeviceHealth | where Timestamp > ago(30m)
+    | summarize arg_max(Timestamp, AudioDriverVersion, AudioDriverStatus, PeripheralModel) by UserUPN
+) on UserUPN
+| summarize AvgScore=round(avg(QualityScore),2), AvgJitter=round(avg(AudioJitter),1), Calls=count()
+    by AudioDriverVersion, PeripheralModel
+| where Calls > 2
+| order by AvgScore asc
+// The outlier combo (specific driver + specific headset) stands out
+
+// --- 7.2 Compare affected vs unaffected users ---
+silver_TeamsCallQuality
+| where Timestamp > ago(30m)
+| join kind=inner (
+    silver_DeviceHealth | where Timestamp > ago(30m)
+    | summarize arg_max(Timestamp, AudioDriverVersion, PeripheralModel) by UserUPN
+) on UserUPN
+| extend IsAffected = AudioDriverVersion == "10.0.26100.1" and PeripheralModel == "Jabra Evolve2 85"
+| summarize AvgScore=round(avg(QualityScore),2), AvgJitter=round(avg(AudioJitter),1) by IsAffected
+
+
+// ============================================================
+// 8. MEETING STORM (Scenario 7)
+// Network looks fine (probes don't use QoS). Quality drops when
+// concurrent call count on a subnet exceeds QoS capacity.
+// ============================================================
+
+// --- 8.1 Concurrent calls vs quality per subnet ---
+silver_TeamsCallQuality
+| where Timestamp > ago(15m)
+| summarize ConcurrentCalls=dcount(CallId), AvgScore=round(avg(QualityScore),2)
+    by SubnetId, bin(Timestamp, 1m)
+| where ConcurrentCalls >= 3
+| order by ConcurrentCalls desc
+// Look for negative correlation: more calls → lower score
+
+// --- 8.2 Subnet quality anomaly (network probe says healthy) ---
+let busySubnets = silver_TeamsCallQuality
+| where Timestamp > ago(10m)
+| summarize Calls=dcount(CallId), AvgScore=round(avg(QualityScore),2) by SubnetId
+| where Calls >= 4 and AvgScore < 3.5;
+let subnetProbes = silver_NetworkProbe
+| where Timestamp > ago(10m)
+| summarize NetRTT=round(avg(RTT),0), NetLoss=round(avg(PacketLoss),1) by SubnetId;
+busySubnets
+| join kind=inner subnetProbes on SubnetId
+| project SubnetId, Calls, AvgScore, NetRTT, NetLoss
+| extend Diagnosis = iff(NetLoss < 1 and NetRTT < 50, "Network healthy but quality poor → QoS exhaustion", "Network issue")
+
+
+// ============================================================
+// 9. ASYMMETRIC DEGRADATION (Scenario 8)
+// Audio fine. Video fine outbound. Video inbound frozen.
+// Need to split by MediaType + Direction.
+// ============================================================
+
+// --- 9.1 Quality by MediaType × Direction per building ---
+silver_TeamsCallQuality
+| where Timestamp > ago(15m)
+| summarize AvgFPS=round(avg(VideoFrameRate),0), AvgScore=round(avg(QualityScore),2), Segments=count()
+    by Building, MediaType, Direction
+| where MediaType == "Video"
+| evaluate pivot(Direction, avg(AvgFPS), avg(AvgScore))
+// Inbound FPS << Outbound FPS = asymmetric degradation
+
+// --- 9.2 Asymmetry detection (auto) ---
+silver_TeamsCallQuality
+| where Timestamp > ago(15m) and MediaType == "Video"
+| summarize AvgFPS=avg(VideoFrameRate) by Building, Direction
+| evaluate pivot(Direction, avg(AvgFPS))
+| extend Asymmetry = abs(Inbound_avg_AvgFPS - Outbound_avg_AvgFPS)
+| where Asymmetry > 5
+| extend Direction = iff(Inbound_avg_AvgFPS < Outbound_avg_AvgFPS, "Download degraded", "Upload degraded")
+
+
+// ============================================================
+// 10. TIME-SERIES ANOMALY DETECTION
+// Automatically detect anomalies without thresholds
+// ============================================================
+
+// --- 10.1 Quality score anomaly detection ---
+silver_TeamsCallQuality
+| where Timestamp > ago(2h)
+| make-series AvgScore=avg(QualityScore) on Timestamp step 1m
+| extend (anomalies, score, baseline) = series_decompose_anomalies(AvgScore, 1.5)
+| mv-expand Timestamp to typeof(datetime), AvgScore to typeof(real), anomalies to typeof(int), score to typeof(real), baseline to typeof(real)
+| where anomalies != 0
+| project Timestamp, AvgScore=round(AvgScore,2), Direction=iff(anomalies > 0, "Spike", "Drop"), AnomalyScore=round(score,2)
+
+// --- 10.2 Per-building RTT anomaly (to catch ISP peering) ---
+silver_NetworkProbe
+| where Timestamp > ago(2h)
+| make-series AvgRTT=avg(RTT) on Timestamp step 1m by Building
+| extend (anomalies, score, baseline) = series_decompose_anomalies(AvgRTT, 1.5)
+| mv-expand Timestamp to typeof(datetime), AvgRTT to typeof(real), anomalies to typeof(int), score to typeof(real)
+| where anomalies > 0
+| project Timestamp, Building, AvgRTT=round(AvgRTT,0), AnomalyScore=round(score,2)
+| order by AnomalyScore desc
+
+// --- 10.3 Quality forecast (30 min ahead) ---
+silver_TeamsCallQuality
+| where Timestamp > ago(3h)
+| make-series AvgScore=avg(QualityScore) on Timestamp step 5m
+| extend forecast = series_decompose_forecast(AvgScore, 6)
+| render timechart with (title="Call Quality — Actual + 30min Forecast")

@@ -1,0 +1,247 @@
+// ============================================================
+// Teams Monitoring Ontology — Entity Relationships & Causal Model
+// ============================================================
+// This ontology defines HOW entities relate and HOW failures propagate.
+// A Data Agent uses this to answer: "Where is the issue coming from?"
+//
+// The key insight: Teams call quality depends on a CHAIN of components.
+// A degradation at any link affects downstream quality, but the ROOT CAUSE
+// is only visible by correlating signals across all layers.
+// ============================================================
+
+// ============================================================
+// ENTITY GRAPH — What exists and how it connects
+// ============================================================
+//
+//  User ──uses──▶ Device ──connects──▶ NetworkAdapter ──joins──▶ Subnet
+//    │                │                      │                      │
+//    │            has_peripheral         wifi_or_eth            belongs_to
+//    │                │                      │                      │
+//    │           Peripheral             AccessPoint           Building/Floor
+//    │                                      │                      │
+//    └──makes──▶ TeamsCall ──routes──▶ MediaPath ──traverses──▶ ISP_Route
+//                   │                      │                      │
+//              uses_codec              via_relay              reaches
+//                   │                      │                      │
+//              AudioCodec           TeamsRelay            M365_Service
+//
+// ============================================================
+
+// ============================================================
+// CAUSAL CHAINS — How failures propagate (for Agent reasoning)
+// ============================================================
+//
+// Each chain describes: TriggerEvent → IntermediateSignals → UserImpact
+// The intermediate signals are what make detection hard.
+//
+// ┌─────────────────────────────────────────────────────────────────┐
+// │ CHAIN 1: Thermal Throttle                                      │
+// │ Trigger: Long meeting (>5 min) on laptop                       │
+// │ Signal:  CPU 70-85% (looks normal!) + GPU usage rising         │
+// │          + VideoFrameRate slowly dropping 28→18→12              │
+// │ Impact:  Video quality degrades, resolution downscales          │
+// │ Key:     Correlate call Duration + GPUUsage trend + FPS trend   │
+// │ Miss:    CPU threshold alert won't fire (never >90%)            │
+// │          Network looks fine. Server looks fine.                  │
+// └─────────────────────────────────────────────────────────────────┘
+//
+// ┌─────────────────────────────────────────────────────────────────┐
+// │ CHAIN 2: ISP Peering Degradation                               │
+// │ Trigger: ISP route to ONE Teams relay degrades                  │
+// │ Signal:  RTT to that relay +30-60ms. Other relays fine.         │
+// │          Only buildings with that ISP affected.                  │
+// │          Non-Teams traffic (web, email) unaffected.              │
+// │ Impact:  ~40% of calls from those buildings have higher latency │
+// │ Key:     Group by ISP + TargetEndpoint to find the outlier      │
+// │ Miss:    Avg RTT per building barely moves (3 relays, 1 bad)    │
+// │          Building-level dashboard shows "slight increase"        │
+// └─────────────────────────────────────────────────────────────────┘
+//
+// ┌─────────────────────────────────────────────────────────────────┐
+// │ CHAIN 3: WiFi Channel Contention                               │
+// │ Trigger: 2.4GHz interference (microwave, Bluetooth, neighbor)   │
+// │ Signal:  RSSI dips on channels 1/6/11 only, 5GHz channels fine │
+// │          Only WiFi users affected, Ethernet users fine           │
+// │          Only ONE floor of ONE building                          │
+// │          Intermittent: 30% of probes show dip, 70% normal       │
+// │ Impact:  Periodic jitter spikes during calls on that floor      │
+// │ Key:     Filter WiFiChannel IN (1,6,11) + Floor + RSSI pattern  │
+// │ Miss:    Avg RSSI per building looks OK (most probes normal)    │
+// │          Global WiFi dashboard shows green                       │
+// └─────────────────────────────────────────────────────────────────┘
+//
+// ┌─────────────────────────────────────────────────────────────────┐
+// │ CHAIN 4: VPN Media Bypass Failure                              │
+// │ Trigger: Split tunnel misconfiguration — Teams media in tunnel  │
+// │ Signal:  VPN network probes show normal latency (ICMP is fine)  │
+// │          But call RTT is 30-55ms higher than probe RTT           │
+// │          Only VPN users affected. Office users fine.             │
+// │ Impact:  Remote workers have worse call quality                 │
+// │ Key:     Compare NetworkProbe.RTT vs TeamsCallQuality.AudioRTT  │
+// │          for VPN users — the GAP reveals the tunnel routing      │
+// │ Miss:    Network dashboard shows VPN "healthy"                  │
+// │          Device dashboard shows "healthy"                        │
+// └─────────────────────────────────────────────────────────────────┘
+//
+// ┌─────────────────────────────────────────────────────────────────┐
+// │ CHAIN 5: DNS Resolver Intermittent                             │
+// │ Trigger: Corporate DNS resolver responds slowly ~10% of time    │
+// │ Signal:  Avg DNS is 15→22ms (barely moves). But P95 = 200ms.   │
+// │          Teams auth/call setup requires DNS → timeout → failure  │
+// │          Server health shows "ServiceOperational"               │
+// │ Impact:  ~8% call setup failures, looks random                  │
+// │ Key:     Correlate call failures with DNS P95 spikes            │
+// │          Same building, same time window                         │
+// │ Miss:    Avg DNS looks fine. M365 dashboard shows healthy.      │
+// │          Failures look like "random call setup issues"           │
+// └─────────────────────────────────────────────────────────────────┘
+//
+// ┌─────────────────────────────────────────────────────────────────┐
+// │ CHAIN 6: Audio Driver Regression                               │
+// │ Trigger: Windows Update pushed driver 10.0.26100.1              │
+// │ Signal:  Echo cancellation bug with Jabra Evolve2 85 headset    │
+// │          Quality drops ONLY for that driver+peripheral combo     │
+// │          Other headsets with same driver are fine                 │
+// │          Same headset with older driver is fine                   │
+// │ Impact:  Jitter spikes for affected users (looks like network)  │
+// │ Key:     Group by AudioDriverVersion × PeripheralModel          │
+// │ Miss:    Per-user view shows random quality issues              │
+// │          Network/server look perfectly healthy                   │
+// └─────────────────────────────────────────────────────────────────┘
+//
+// ┌─────────────────────────────────────────────────────────────────┐
+// │ CHAIN 7: QoS Bandwidth Exhaustion (Meeting Storm)              │
+// │ Trigger: All-hands meeting → many concurrent calls on 1 subnet │
+// │ Signal:  Network probes show normal bandwidth (ICMP not QoS)    │
+// │          Quality degrades proportional to concurrent call count  │
+// │          Only ONE subnet affected                                │
+// │ Impact:  All users on that subnet see quality drop              │
+// │ Key:     Count concurrent calls per subnet, correlate with      │
+// │          quality score — when count > threshold, quality drops   │
+// │ Miss:    Network looks fine. Devices look fine. Issue is         │
+// │          shared resource exhaustion, invisible to per-user view  │
+// └─────────────────────────────────────────────────────────────────┘
+//
+// ┌─────────────────────────────────────────────────────────────────┐
+// │ CHAIN 8: Asymmetric Path Degradation                           │
+// │ Trigger: Download path (ISP→building) degrades, upload fine     │
+// │ Signal:  Outbound screen share works. Inbound video freezes.    │
+// │          Audio (low bandwidth, symmetric) is fine.               │
+// │          Only Video + Direction=Inbound shows low FPS            │
+// │ Impact:  Users can share but can't see others' video            │
+// │ Key:     Split analysis by MediaType + Direction to find        │
+// │          asymmetry — Inbound Video FPS << Outbound Video FPS    │
+// │ Miss:    Average quality per building masks the asymmetry       │
+// │          Audio-only calls show no issue                          │
+// └─────────────────────────────────────────────────────────────────┘
+
+// ============================================================
+// DETECTION RULES — KQL patterns the Data Agent should discover
+// ============================================================
+
+// Rule 1: Thermal Throttle Detection
+// "Find users where call duration > 5min AND video FPS is declining over time"
+TeamsCallQuality
+| where Timestamp > ago(30m) and MediaType == "Video" and Duration > 300
+| summarize FPS_Start = percentile(VideoFrameRate, 90), FPS_End = percentile(VideoFrameRate, 10) by UserUPN, CallId
+| where FPS_Start > 22 and FPS_End < 18
+| extend FPS_Drop = FPS_Start - FPS_End
+| join kind=inner (
+    DeviceHealth | where Timestamp > ago(30m) | summarize AvgGPU = avg(GPUUsage), MaxGPU = max(GPUUsage) by UserUPN
+) on UserUPN
+| where MaxGPU > 60
+| project UserUPN, CallId, FPS_Start, FPS_End, FPS_Drop, AvgGPU, MaxGPU
+| extend RootCause = "Thermal Throttle — Long call causing GPU thermal limit"
+
+// Rule 2: ISP Peering Detection
+// "Find relay endpoints where RTT is significantly higher for one ISP"
+NetworkProbe
+| where Timestamp > ago(15m)
+| summarize AvgRTT = avg(RTT), P95RTT = percentile(RTT, 95), Probes = count() by ISP, TargetEndpoint
+| join kind=inner (
+    NetworkProbe | where Timestamp > ago(15m)
+    | summarize GlobalAvg = avg(RTT) by TargetEndpoint
+) on TargetEndpoint
+| where AvgRTT > GlobalAvg * 1.5 and Probes > 3
+| extend RootCause = strcat("ISP Peering — ", ISP, " has degraded route to ", TargetEndpoint)
+
+// Rule 3: WiFi Contention Detection
+// "Find floors where 2.4GHz RSSI variance is high but 5GHz is stable"
+NetworkProbe
+| where Timestamp > ago(15m)
+| extend FreqBand = iff(WiFiChannel in (1,6,11), "2.4GHz", "5GHz")
+| summarize AvgRSSI = avg(RSSI), StdRSSI = stdev(RSSI), AvgInterference = avg(WiFiInterference)
+    by Building, Floor, FreqBand
+| evaluate pivot(FreqBand, take_any(AvgRSSI), take_any(StdRSSI), take_any(AvgInterference))
+| where ['2.4GHz_StdRSSI'] > ['5GHz_StdRSSI'] * 2
+| extend RootCause = strcat("WiFi contention on 2.4GHz at ", Building, "/", Floor)
+
+// Rule 4: VPN Media Bypass Detection
+// "Compare network probe RTT vs actual call RTT for VPN users"
+let probeRTT = NetworkProbe
+| where Timestamp > ago(15m)
+| summarize ProbeRTT = avg(RTT) by SubnetId;
+let callRTT = TeamsCallQuality
+| where Timestamp > ago(15m) and VPNActive
+| summarize CallRTT = avg(AudioRTT) by SubnetId;
+probeRTT
+| join kind=inner callRTT on SubnetId
+| where CallRTT > ProbeRTT + 25  // >25ms gap indicates tunnel routing
+| extend RTT_Gap = round(CallRTT - ProbeRTT, 1)
+| extend RootCause = strcat("VPN media bypass failure — ", RTT_Gap, "ms extra RTT during calls only")
+
+// Rule 5: DNS Intermittent Detection
+// "Correlate call setup failures with DNS P95 spikes"
+let dnsSpikes = NetworkProbe
+| where Timestamp > ago(15m)
+| summarize P95DNS = percentile(DNSResolutionMs, 95), AvgDNS = avg(DNSResolutionMs) by Building, bin(Timestamp, 2m)
+| where P95DNS > 80;
+let callFailures = TeamsCallQuality
+| where Timestamp > ago(15m) and FailureReason == "CallSetupTimeout"
+| summarize Failures = count() by Building, bin(Timestamp, 2m);
+dnsSpikes
+| join kind=inner callFailures on Building, Timestamp
+| extend RootCause = strcat("DNS intermittent — P95=", round(P95DNS,0), "ms correlates with ", Failures, " call failures")
+
+// Rule 6: Driver Regression Detection
+// "Find quality outliers grouped by driver + peripheral combination"
+TeamsCallQuality
+| where Timestamp > ago(30m)
+| join kind=inner (
+    DeviceHealth | where Timestamp > ago(30m) | summarize arg_max(Timestamp, AudioDriverVersion, PeripheralModel) by UserUPN
+) on UserUPN
+| summarize AvgScore = avg(QualityScore), AvgJitter = avg(AudioJitter), Calls = count()
+    by AudioDriverVersion, PeripheralModel
+| where Calls > 3
+| join kind=inner (
+    TeamsCallQuality | where Timestamp > ago(30m) | summarize GlobalAvg = avg(QualityScore)
+) on $left.AudioDriverVersion == $left.AudioDriverVersion // cross-join trick
+| where AvgScore < GlobalAvg - 0.5
+| extend RootCause = strcat("Driver regression — ", AudioDriverVersion, " + ", PeripheralModel, " combo has ", round(AvgJitter,1), " avg jitter")
+
+// Rule 7: Meeting Storm Detection
+// "Find subnets where concurrent call count correlates with quality drop"
+TeamsCallQuality
+| where Timestamp > ago(15m)
+| summarize ConcurrentCalls = dcount(CallId), AvgScore = avg(QualityScore) by SubnetId, bin(Timestamp, 1m)
+| where ConcurrentCalls > 3
+| summarize Correlation = round(correlation(todouble(ConcurrentCalls), AvgScore), 2),
+            MaxConcurrent = max(ConcurrentCalls),
+            MinScore = min(AvgScore)
+    by SubnetId
+| where Correlation < -0.5  // negative correlation = more calls → worse quality
+| extend RootCause = strcat("Meeting storm — ", MaxConcurrent, " concurrent calls on ", SubnetId, " (correlation: ", Correlation, ")")
+
+// Rule 8: Asymmetric Degradation Detection
+// "Compare inbound vs outbound video quality per building"
+TeamsCallQuality
+| where Timestamp > ago(15m) and MediaType == "Video"
+| summarize AvgFPS = avg(VideoFrameRate), AvgLoss = avg(VideoPacketLoss), Segments = count()
+    by Building, Direction
+| evaluate pivot(Direction, avg(AvgFPS), avg(AvgLoss))
+| where abs(Inbound_avg_AvgFPS - Outbound_avg_AvgFPS) > 8
+| extend RootCause = case(
+    Inbound_avg_AvgFPS < Outbound_avg_AvgFPS,
+    strcat("Asymmetric degradation at ", Building, " — download path (Inbound FPS: ", round(Inbound_avg_AvgFPS,0), " vs Outbound: ", round(Outbound_avg_AvgFPS,0), ")"),
+    strcat("Asymmetric degradation at ", Building, " — upload path")
+)
