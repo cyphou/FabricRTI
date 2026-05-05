@@ -1,0 +1,70 @@
+// ============================================================
+// AWS Monitoring — Bronze Table Definitions (CSV ingestion)
+// ============================================================
+// 3 tables for multi-account AWS telemetry
+// Routing: Eventstream "Dynamic schema via headers" on _table property
+// ============================================================
+
+// --- CloudTrail API Activity ---
+.create-merge table AWSCloudTrail (
+    Timestamp: datetime,
+    EventId: string,
+    EventName: string,
+    EventSource: string,
+    AWSRegion: string,
+    AccountId: string,
+    UserIdentity: string,
+    UserAgent: string,
+    SourceIPAddress: string,
+    RequestParameters: string,
+    ResponseStatus: string,
+    ErrorCode: string,
+    ErrorMessage: string,
+    ResourceType: string,
+    ResourceARN: string,
+    MFAUsed: bool,
+    ReadOnly: bool
+)
+
+// --- VPC Flow Logs ---
+.create-merge table AWSVPCFlowLogs (
+    Timestamp: datetime,
+    FlowId: string,
+    AccountId: string,
+    VpcId: string,
+    SubnetId: string,
+    InterfaceId: string,
+    SrcAddr: string,
+    DstAddr: string,
+    SrcPort: int,
+    DstPort: int,
+    Protocol: int,
+    Packets: long,
+    Bytes: long,
+    Action: string,
+    LogStatus: string,
+    AWSRegion: string,
+    Direction: string,
+    TrafficType: string
+)
+
+// --- CloudWatch Metrics ---
+.create-merge table AWSCloudWatchMetrics (
+    Timestamp: datetime,
+    MetricId: string,
+    AccountId: string,
+    InstanceId: string,
+    InstanceType: string,
+    AWSRegion: string,
+    AvailabilityZone: string,
+    CPUUtilization: real,
+    NetworkIn: long,
+    NetworkOut: long,
+    DiskReadOps: long,
+    DiskWriteOps: long,
+    MemoryUsed: real,
+    GPUUtilization: real,
+    StatusCheckFailed: int,
+    AutoScalingGroup: string,
+    Tags: string
+)
