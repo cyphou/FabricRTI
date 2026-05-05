@@ -16,22 +16,33 @@
 #   4. LATERAL MOVEMENT — After one successful login from unusual IP,
 #      API calls fan out across regions. No single region is alarming.
 # ============================================================
-# Usage: pip install azure-eventhub && python aws_simulator.py
+# Usage:
+#   Direct to Kusto (default):  python aws_simulator.py
+#   Via Eventstream:            python aws_simulator.py --eventhub
+#   Dry run:                    python aws_simulator.py --dry-run
 
 import csv
 import io
 import json
+import os
 import random
+import sys
 import time
 import datetime
 import uuid
-from azure.eventhub import EventHubProducerClient, EventData
 
 # ============================================================
-# Eventstream Custom Endpoint (Event Hub-compatible)
+# Mode: "direct" (Kusto streaming) or "eventhub" (Eventstream)
 # ============================================================
-CONN_STR = ""  # Set your Eventstream Custom Endpoint connection string here
+MODE = "eventhub" if "--eventhub" in sys.argv else ("dry" if "--dry-run" in sys.argv else "direct")
 INTERVAL_SEC = 4  # seconds between batches
+
+# Eventstream Custom Endpoint (Event Hub-compatible) — set via env var
+CONN_STR = os.environ.get("AWS_EVENTHUB_CONN_STR", "")
+
+# Kusto direct ingestion
+KUSTO_URI = "https://trd-19dhtm16qjthdvwa1z.z3.kusto.fabric.microsoft.com"
+KUSTO_DB = "RTI-Demo-Eventhouse"
 
 # ============================================================
 # Reference data
@@ -438,30 +449,37 @@ def generate_cloudwatch_metrics(now, tick):
 # ============================================================
 
 def main():
-    if not CONN_STR:
-        print("=" * 65)
-        print("  AWS Multi-Cloud Simulator — CSV Format + Schema Routing")
-        print("=" * 65)
-        print()
-        print("  ⚠  CONN_STR is empty. Running in DRY RUN mode.")
-        print("  ⚠  Set CONN_STR to your Eventstream Custom Endpoint.")
-        print()
+    if MODE == "dry":
         dry_run(ticks=5)
         return
 
-    producer = EventHubProducerClient.from_connection_string(CONN_STR)
     print("=" * 65)
     print("  AWS Multi-Cloud Simulator — CSV Format + Schema Routing")
     print("=" * 65)
+    print(f"  Mode:        {MODE}")
     print(f"  Accounts:    {len(ACCOUNTS)}")
     print(f"  Regions:     {len(REGIONS)}")
     print(f"  EC2 Fleet:   {len(ec2_fleet)}")
     print(f"  Tables:      AWSCloudTrail, AWSVPCFlowLogs, AWSCloudWatchMetrics")
-    print(f"  Format:      CSV (routed via _table application property)")
+    print(f"  Format:      CSV")
     print(f"  Scenarios:   4 (credential stuffing, data exfiltration, crypto mining, lateral movement)")
     print(f"  Interval:    {INTERVAL_SEC}s")
     print()
     print("Press Ctrl+C to stop.\n")
+
+    # Set up the ingestion backend
+    if MODE == "eventhub":
+        from azure.eventhub import EventHubProducerClient, EventData as _ED
+        producer = EventHubProducerClient.from_connection_string(CONN_STR)
+        sender = _eventhub_sender(producer, _ED)
+    else:
+        import requests as _req
+        import urllib3 as _u3
+        _u3.disable_warnings()
+        from azure.identity import AzureCliCredential
+        cred = AzureCliCredential(process_timeout=30)
+        token = cred.get_token(KUSTO_URI + "/.default").token
+        sender = _kusto_sender(_req, token)
 
     total = {"trail": 0, "flow": 0, "cw": 0}
     tick = 0
@@ -472,27 +490,19 @@ def main():
             tick += 1
             evolve_scenarios(tick)
 
-            batch = producer.create_batch()
-            count = 0
+            trails = generate_cloudtrail(now, tick)
+            flows = generate_vpc_flow_logs(now, tick)
+            cw = generate_cloudwatch_metrics(now, tick) if tick % 2 == 0 else []
 
-            for row in generate_cloudtrail(now, tick):
-                batch.add(make_csv_event(row, "AWSCloudTrail"))
-                count += 1
-                total["trail"] += 1
+            sender(trails, "AWSCloudTrail")
+            sender(flows, "AWSVPCFlowLogs")
+            if cw:
+                sender(cw, "AWSCloudWatchMetrics")
 
-            for row in generate_vpc_flow_logs(now, tick):
-                batch.add(make_csv_event(row, "AWSVPCFlowLogs"))
-                count += 1
-                total["flow"] += 1
-
-            # CloudWatch every 2nd tick (~8s intervals like real CW)
-            if tick % 2 == 0:
-                for row in generate_cloudwatch_metrics(now, tick):
-                    batch.add(make_csv_event(row, "AWSCloudWatchMetrics"))
-                    count += 1
-                    total["cw"] += 1
-
-            producer.send_batch(batch)
+            total["trail"] += len(trails)
+            total["flow"] += len(flows)
+            total["cw"] += len(cw)
+            count = len(trails) + len(flows) + len(cw)
 
             ts = now.strftime("%H:%M:%S")
             active = [k for k, v in scenarios.items() if v["active"]]
@@ -507,7 +517,55 @@ def main():
         for k, v in total.items():
             print(f"  {k}: {v}")
     finally:
-        producer.close()
+        if MODE == "eventhub":
+            producer.close()
+
+
+def _eventhub_sender(producer, EventData):
+    """Return a sender function that batches events to Event Hub."""
+    def send(rows, table_name):
+        if not rows:
+            return
+        batch = producer.create_batch()
+        for row in rows:
+            csv_row = to_csv_row(row)
+            ed = EventData(csv_row.encode("utf-8"))
+            ed.properties = {"_table": table_name}
+            ed.content_type = "text/csv"
+            batch.add(ed)
+        producer.send_batch(batch)
+    return send
+
+
+def _kusto_sender(requests_mod, token):
+    """Return a sender function that uses Kusto streaming ingestion."""
+    h = {"Authorization": "Bearer " + token, "Content-Type": "application/json"}
+
+    def send(rows, table_name, retries=5):
+        if not rows:
+            return
+        # Build CSV block for .ingest inline
+        csv_lines = "\n".join(to_csv_row(r) for r in rows)
+        csl = f".ingest inline into table {table_name} with (format='csv') <|\n{csv_lines}"
+        payload = {"db": KUSTO_DB, "csl": csl}
+        for attempt in range(retries):
+            try:
+                r = requests_mod.post(
+                    KUSTO_URI + "/v1/rest/mgmt", json=payload,
+                    headers=h, verify=False, timeout=30,
+                )
+                if r.status_code == 200:
+                    return
+                # Token expired — refresh
+                if r.status_code == 401 and attempt < retries - 1:
+                    from azure.identity import AzureCliCredential
+                    new_token = AzureCliCredential(process_timeout=30).get_token(KUSTO_URI + "/.default").token
+                    h["Authorization"] = "Bearer " + new_token
+                    continue
+            except Exception:
+                pass
+            time.sleep(1 * (attempt + 1))
+    return send
 
 
 def dry_run(ticks=5):
