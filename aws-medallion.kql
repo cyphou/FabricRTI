@@ -1,0 +1,248 @@
+// ============================================================
+// AWS Monitoring — Medallion Architecture (Silver + Gold)
+// Security analytics for multi-account AWS telemetry
+// ============================================================
+// Run AFTER aws-schema.kql and data starts flowing.
+// ============================================================
+
+// ============================================================
+// SILVER LAYER — Cleaned, enriched tables via update policies
+// ============================================================
+
+// --- Silver: CloudTrail ---
+.create-merge table silver_AWSCloudTrail (
+    Timestamp: datetime,
+    EventId: string,
+    EventName: string,
+    EventSource: string,
+    AWSRegion: string,
+    AccountId: string,
+    UserIdentity: string,
+    UserAgent: string,
+    SourceIPAddress: string,
+    ResponseStatus: string,
+    ErrorCode: string,
+    ResourceType: string,
+    ResourceARN: string,
+    MFAUsed: bool,
+    ReadOnly: bool,
+    // Enriched fields
+    ServiceName: string,
+    IsFailure: bool,
+    IsWriteAction: bool,
+    IsSensitiveAction: bool,
+    IsConsoleLogin: bool,
+    UserAgentCategory: string
+)
+
+.create-or-alter function fn_SilverAWSCloudTrail() {
+    AWSCloudTrail
+    | extend
+        ServiceName = tostring(split(EventSource, ".")[0]),
+        IsFailure = ResponseStatus != "Success",
+        IsWriteAction = not(ReadOnly),
+        IsSensitiveAction = EventName in (
+            "AssumeRole", "CreateUser", "AttachRolePolicy", "PutRolePolicy",
+            "GetSecretValue", "ConsoleLogin", "DeleteBucket", "RunInstances",
+            "AuthorizeSecurityGroupIngress", "TerminateInstances",
+            "CreateFunction20150331"
+        ),
+        IsConsoleLogin = EventName == "ConsoleLogin",
+        UserAgentCategory = case(
+            UserAgent has "console", "Console",
+            UserAgent has "terraform", "Terraform",
+            UserAgent has "CloudFormation", "CloudFormation",
+            UserAgent has "aws-cli", "CLI",
+            UserAgent has "Boto3" or UserAgent has "aws-sdk", "SDK",
+            "Other"
+        )
+    | project
+        Timestamp, EventId, EventName, EventSource, AWSRegion, AccountId,
+        UserIdentity, UserAgent, SourceIPAddress, ResponseStatus, ErrorCode,
+        ResourceType, ResourceARN, MFAUsed, ReadOnly,
+        ServiceName, IsFailure, IsWriteAction, IsSensitiveAction, IsConsoleLogin,
+        UserAgentCategory
+}
+
+.alter table silver_AWSCloudTrail policy update @'[{"IsEnabled": true, "Source": "AWSCloudTrail", "Query": "fn_SilverAWSCloudTrail()", "IsTransactional": true}]'
+
+// --- Silver: VPC Flow Logs ---
+.create-merge table silver_AWSVPCFlowLogs (
+    Timestamp: datetime,
+    FlowId: string,
+    AccountId: string,
+    VpcId: string,
+    SubnetId: string,
+    InterfaceId: string,
+    SrcAddr: string,
+    DstAddr: string,
+    SrcPort: int,
+    DstPort: int,
+    Protocol: int,
+    Packets: long,
+    Bytes: long,
+    Action: string,
+    AWSRegion: string,
+    Direction: string,
+    TrafficType: string,
+    // Enriched fields
+    ProtocolName: string,
+    IsRejected: bool,
+    IsHighPort: bool,
+    BytesKB: real,
+    IsSuspiciousPort: bool,
+    TrafficCategory: string
+)
+
+.create-or-alter function fn_SilverAWSVPCFlowLogs() {
+    AWSVPCFlowLogs
+    | extend
+        ProtocolName = case(
+            Protocol == 6, "TCP",
+            Protocol == 17, "UDP",
+            Protocol == 1, "ICMP",
+            strcat("Proto-", tostring(Protocol))
+        ),
+        IsRejected = Action == "REJECT",
+        IsHighPort = DstPort > 1024,
+        BytesKB = round(todouble(Bytes) / 1024.0, 2),
+        IsSuspiciousPort = DstPort in (3333, 4444, 8333, 14444, 5555, 9999, 31337),
+        TrafficCategory = case(
+            DstPort in (443, 8443), "HTTPS",
+            DstPort == 80, "HTTP",
+            DstPort == 22, "SSH",
+            DstPort in (5432, 3306, 1433), "Database",
+            DstPort == 6379, "Redis",
+            DstPort in (3333, 4444, 8333, 14444), "Mining",
+            "Other"
+        )
+    | project
+        Timestamp, FlowId, AccountId, VpcId, SubnetId, InterfaceId,
+        SrcAddr, DstAddr, SrcPort, DstPort, Protocol, Packets, Bytes,
+        Action, AWSRegion, Direction, TrafficType,
+        ProtocolName, IsRejected, IsHighPort, BytesKB, IsSuspiciousPort,
+        TrafficCategory
+}
+
+.alter table silver_AWSVPCFlowLogs policy update @'[{"IsEnabled": true, "Source": "AWSVPCFlowLogs", "Query": "fn_SilverAWSVPCFlowLogs()", "IsTransactional": true}]'
+
+// --- Silver: CloudWatch Metrics ---
+.create-merge table silver_AWSCloudWatchMetrics (
+    Timestamp: datetime,
+    MetricId: string,
+    AccountId: string,
+    InstanceId: string,
+    InstanceType: string,
+    AWSRegion: string,
+    AvailabilityZone: string,
+    CPUUtilization: real,
+    NetworkIn: long,
+    NetworkOut: long,
+    DiskReadOps: long,
+    DiskWriteOps: long,
+    MemoryUsed: real,
+    GPUUtilization: real,
+    StatusCheckFailed: int,
+    AutoScalingGroup: string,
+    Tags: string,
+    // Enriched fields
+    CPUCategory: string,
+    MemoryCategory: string,
+    IsHighCPU: bool,
+    IsHighGPU: bool,
+    IsStatusCheckFailed: bool,
+    NetworkOutKB: real,
+    InstanceFamily: string
+)
+
+.create-or-alter function fn_SilverAWSCloudWatchMetrics() {
+    AWSCloudWatchMetrics
+    | extend
+        CPUCategory = case(
+            CPUUtilization <= 30, "Low",
+            CPUUtilization <= 60, "Normal",
+            CPUUtilization <= 85, "High",
+            "Critical"
+        ),
+        MemoryCategory = case(
+            MemoryUsed <= 40, "Low",
+            MemoryUsed <= 70, "Normal",
+            MemoryUsed <= 90, "High",
+            "Critical"
+        ),
+        IsHighCPU = CPUUtilization > 80,
+        IsHighGPU = GPUUtilization > 50,
+        IsStatusCheckFailed = StatusCheckFailed > 0,
+        NetworkOutKB = round(todouble(NetworkOut) / 1024.0, 2),
+        InstanceFamily = tostring(split(InstanceType, ".")[0])
+    | project
+        Timestamp, MetricId, AccountId, InstanceId, InstanceType,
+        AWSRegion, AvailabilityZone, CPUUtilization, NetworkIn, NetworkOut,
+        DiskReadOps, DiskWriteOps, MemoryUsed, GPUUtilization, StatusCheckFailed,
+        AutoScalingGroup, Tags,
+        CPUCategory, MemoryCategory, IsHighCPU, IsHighGPU,
+        IsStatusCheckFailed, NetworkOutKB, InstanceFamily
+}
+
+.alter table silver_AWSCloudWatchMetrics policy update @'[{"IsEnabled": true, "Source": "AWSCloudWatchMetrics", "Query": "fn_SilverAWSCloudWatchMetrics()", "IsTransactional": true}]'
+
+
+// ============================================================
+// GOLD LAYER — Materialized views for security dashboards
+// ============================================================
+
+// --- Gold: API Activity by Service & User (10-min tumbling) ---
+.create-or-alter materialized-view with (backfill=true) gold_AWSAPIActivity on table silver_AWSCloudTrail {
+    silver_AWSCloudTrail
+    | summarize
+        TotalCalls = count(),
+        Failures = countif(IsFailure),
+        WriteActions = countif(IsWriteAction),
+        SensitiveActions = countif(IsSensitiveAction),
+        UniqueIPs = dcount(SourceIPAddress),
+        UniqueRegions = dcount(AWSRegion)
+    by bin(Timestamp, 10m), AccountId, UserIdentity, ServiceName
+}
+
+// --- Gold: Network Traffic Summary (10-min tumbling) ---
+.create-or-alter materialized-view with (backfill=true) gold_AWSNetworkTraffic on table silver_AWSVPCFlowLogs {
+    silver_AWSVPCFlowLogs
+    | summarize
+        TotalFlows = count(),
+        RejectedFlows = countif(IsRejected),
+        TotalBytes = sum(Bytes),
+        TotalPackets = sum(Packets),
+        SuspiciousPortHits = countif(IsSuspiciousPort),
+        UniqueDestIPs = dcount(DstAddr)
+    by bin(Timestamp, 10m), AccountId, VpcId, Direction, TrafficCategory
+}
+
+// --- Gold: Instance Health Overview (10-min tumbling) ---
+.create-or-alter materialized-view with (backfill=true) gold_AWSInstanceHealth on table silver_AWSCloudWatchMetrics {
+    silver_AWSCloudWatchMetrics
+    | summarize
+        AvgCPU = avg(CPUUtilization),
+        MaxCPU = max(CPUUtilization),
+        AvgMemory = avg(MemoryUsed),
+        AvgGPU = avg(GPUUtilization),
+        MaxGPU = max(GPUUtilization),
+        TotalNetworkOut = sum(NetworkOut),
+        StatusCheckFailures = countif(IsStatusCheckFailed),
+        Samples = count()
+    by bin(Timestamp, 10m), InstanceId, InstanceType, AWSRegion, AutoScalingGroup
+}
+
+// --- Gold: Security Events Summary (10-min tumbling) ---
+.create-or-alter materialized-view with (backfill=true) gold_AWSSecurityEvents on table silver_AWSCloudTrail {
+    silver_AWSCloudTrail
+    | where IsSensitiveAction or IsFailure
+    | summarize
+        FailedLogins = countif(IsConsoleLogin and IsFailure),
+        AssumeRoleFailures = countif(EventName == "AssumeRole" and IsFailure),
+        PolicyChanges = countif(EventName in ("AttachRolePolicy", "PutRolePolicy")),
+        SecretAccesses = countif(EventName == "GetSecretValue"),
+        SecurityGroupChanges = countif(EventName in ("CreateSecurityGroup", "AuthorizeSecurityGroupIngress")),
+        UniqueSourceIPs = dcount(SourceIPAddress),
+        UniqueUserAgents = dcount(UserAgent)
+    by bin(Timestamp, 10m), AccountId, AWSRegion
+}

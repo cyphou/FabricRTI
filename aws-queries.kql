@@ -1,0 +1,277 @@
+// ============================================================
+// AWS Monitoring — Security Detection & Analytics Queries
+// ============================================================
+// Use with RTI-Demo-Queries KQL Queryset
+// ============================================================
+
+// ============================================================
+// 1. CREDENTIAL STUFFING DETECTION
+// Same user-agent from many IPs with AssumeRole failures
+// ============================================================
+
+// 1a. Brute-force pattern: many unique IPs, same user-agent, same target
+AWSCloudTrail
+| where Timestamp > ago(30m)
+| where EventName == "AssumeRole" and ResponseStatus == "Failure"
+| summarize
+    FailedAttempts = count(),
+    UniqueIPs = dcount(SourceIPAddress),
+    SampleIPs = make_set(SourceIPAddress, 5),
+    Regions = make_set(AWSRegion, 10)
+by UserIdentity, UserAgent, bin(Timestamp, 10m)
+| where FailedAttempts > 5 and UniqueIPs > 3
+| order by FailedAttempts desc
+
+// 1b. User-agent anomaly: rare user-agents with high failure rates
+AWSCloudTrail
+| where Timestamp > ago(1h)
+| summarize
+    Total = count(),
+    Failures = countif(ResponseStatus == "Failure"),
+    UniqueUsers = dcount(UserIdentity),
+    UniqueIPs = dcount(SourceIPAddress)
+by UserAgent
+| extend FailureRate = round(100.0 * Failures / Total, 1)
+| where FailureRate > 50 and Total > 5
+| order by FailureRate desc
+
+
+// ============================================================
+// 2. DATA EXFILTRATION DETECTION
+// Unusual S3 GetObject volume + egress spikes in VPC flow logs
+// ============================================================
+
+// 2a. S3 download volume trending up (compare 10-min windows)
+AWSCloudTrail
+| where Timestamp > ago(1h)
+| where EventName == "GetObject"
+| summarize GetObjectCount = count() by bin(Timestamp, 10m), AccountId
+| order by Timestamp asc
+| serialize
+| extend PrevCount = prev(GetObjectCount)
+| where isnotempty(PrevCount) and GetObjectCount > PrevCount * 1.5
+| project Timestamp, AccountId, GetObjectCount, PrevCount,
+    IncreasePercent = round(100.0 * (GetObjectCount - PrevCount) / PrevCount, 1)
+
+// 2b. Egress anomaly: instances with unusual outbound traffic
+AWSVPCFlowLogs
+| where Timestamp > ago(30m)
+| where Direction == "egress" and Action == "ACCEPT"
+| summarize
+    TotalBytes = sum(Bytes),
+    TotalPackets = sum(Packets),
+    UniqueDestIPs = dcount(DstAddr),
+    TopPorts = make_set(DstPort, 10)
+by SrcAddr, SubnetId, bin(Timestamp, 10m)
+| extend EgressMB = round(todouble(TotalBytes) / 1048576.0, 2)
+| where EgressMB > 50 or UniqueDestIPs > 20
+| order by EgressMB desc
+
+// 2c. Cross-table correlation: S3 reads + egress spike from same account
+AWSCloudTrail
+| where Timestamp > ago(30m) and EventName == "GetObject"
+| summarize S3Reads = count() by bin(Timestamp, 10m), AccountId
+| join kind=inner (
+    AWSVPCFlowLogs
+    | where Timestamp > ago(30m) and Direction == "egress"
+    | summarize EgressBytes = sum(Bytes) by bin(Timestamp, 10m), AccountId
+) on Timestamp, AccountId
+| extend EgressMB = round(todouble(EgressBytes) / 1048576.0, 2)
+| where S3Reads > 10 and EgressMB > 10
+| project Timestamp, AccountId, S3Reads, EgressMB
+
+
+// ============================================================
+// 3. CRYPTO MINING DETECTION
+// Gradual CPU/GPU increase + connections to mining pool ports
+// ============================================================
+
+// 3a. CPU creep: instances with steadily increasing CPU over time
+AWSCloudWatchMetrics
+| where Timestamp > ago(1h)
+| summarize AvgCPU = avg(CPUUtilization) by InstanceId, bin(Timestamp, 5m)
+| order by InstanceId asc, Timestamp asc
+| serialize
+| extend PrevCPU = prev(AvgCPU), PrevInstance = prev(InstanceId)
+| where InstanceId == PrevInstance and isnotempty(PrevCPU)
+| extend CPUDelta = AvgCPU - PrevCPU
+| summarize
+    AvgDelta = avg(CPUDelta),
+    MaxCPU = max(AvgCPU),
+    MinCPU = min(AvgCPU),
+    Samples = count()
+by InstanceId
+| where AvgDelta > 2 and MaxCPU > 70 and Samples > 3
+| extend CPURise = round(MaxCPU - MinCPU, 1)
+| order by CPURise desc
+
+// 3b. GPU anomaly: instances with unexpected GPU utilization
+AWSCloudWatchMetrics
+| where Timestamp > ago(30m)
+| where GPUUtilization > 30
+| summarize
+    AvgGPU = round(avg(GPUUtilization), 1),
+    MaxGPU = round(max(GPUUtilization), 1),
+    AvgCPU = round(avg(CPUUtilization), 1),
+    Samples = count()
+by InstanceId, InstanceType
+| where not(InstanceType has "p3" or InstanceType has "g4") // non-GPU instance types
+| order by MaxGPU desc
+
+// 3c. Mining pool connections: traffic to known mining ports
+AWSVPCFlowLogs
+| where Timestamp > ago(1h)
+| where DstPort in (3333, 4444, 8333, 14444, 5555, 9999)
+| summarize
+    Connections = count(),
+    TotalBytes = sum(Bytes),
+    UniqueDestIPs = dcount(DstAddr),
+    DestIPs = make_set(DstAddr, 10)
+by SrcAddr, DstPort, SubnetId
+| order by Connections desc
+
+// 3d. Cross-table: high CPU instances + suspicious outbound ports
+AWSCloudWatchMetrics
+| where Timestamp > ago(30m) and CPUUtilization > 70
+| distinct InstanceId
+| join kind=inner (
+    AWSVPCFlowLogs
+    | where Timestamp > ago(30m)
+    | where DstPort in (3333, 4444, 8333, 14444)
+    | summarize MiningConnections = count(), MiningBytes = sum(Bytes) by SrcAddr
+) on $left.InstanceId == $right.SrcAddr
+| project InstanceId, MiningConnections, MiningBytesMB = round(todouble(MiningBytes)/1048576.0, 2)
+
+
+// ============================================================
+// 4. LATERAL MOVEMENT DETECTION
+// After login from unusual IP, API calls fan out across regions
+// ============================================================
+
+// 4a. Region fan-out: single user hitting many regions in short window
+AWSCloudTrail
+| where Timestamp > ago(30m)
+| summarize
+    Calls = count(),
+    UniqueRegions = dcount(AWSRegion),
+    Regions = make_set(AWSRegion, 10),
+    UniqueServices = dcount(EventSource),
+    Services = make_set(EventSource, 10),
+    UniqueIPs = dcount(SourceIPAddress)
+by UserIdentity, bin(Timestamp, 10m)
+| where UniqueRegions > 3 and Calls > 10
+| order by UniqueRegions desc
+
+// 4b. Escalation pattern: recon → secrets → write actions
+AWSCloudTrail
+| where Timestamp > ago(30m)
+| extend Phase = case(
+    ReadOnly, "Recon",
+    EventName in ("GetSecretValue", "AssumeRole", "AttachRolePolicy"), "Escalation",
+    not(ReadOnly), "Action",
+    "Other"
+)
+| summarize
+    ReconCalls = countif(Phase == "Recon"),
+    EscalationCalls = countif(Phase == "Escalation"),
+    ActionCalls = countif(Phase == "Action"),
+    Timeline = make_list(pack("t", Timestamp, "e", EventName, "p", Phase), 20)
+by UserIdentity, SourceIPAddress, bin(Timestamp, 10m)
+| where ReconCalls > 0 and EscalationCalls > 0 and ActionCalls > 0
+| order by EscalationCalls desc
+
+// 4c. Unusual login followed by API burst
+let suspicious_logins =
+    AWSCloudTrail
+    | where Timestamp > ago(1h) and EventName == "ConsoleLogin"
+    | where ResponseStatus == "Success" and MFAUsed == false;
+suspicious_logins
+| join kind=inner (
+    AWSCloudTrail
+    | where Timestamp > ago(1h)
+    | summarize PostLoginCalls = count(), UniqueRegions = dcount(AWSRegion)
+    by UserIdentity, bin(Timestamp, 10m)
+    | where PostLoginCalls > 20
+) on UserIdentity
+| project UserIdentity, LoginTime = Timestamp, PostLoginCalls, UniqueRegions
+
+
+// ============================================================
+// 5. OPERATIONAL OVERVIEW — Cross-Table Health
+// ============================================================
+
+// 5a. Account activity overview
+AWSCloudTrail
+| where Timestamp > ago(1h)
+| summarize
+    TotalEvents = count(),
+    Failures = countif(ResponseStatus == "Failure"),
+    WriteOps = countif(not(ReadOnly)),
+    SensitiveOps = countif(EventName in (
+        "AssumeRole","CreateUser","AttachRolePolicy","GetSecretValue",
+        "ConsoleLogin","DeleteBucket","AuthorizeSecurityGroupIngress"
+    )),
+    UniqueUsers = dcount(UserIdentity),
+    UniqueRegions = dcount(AWSRegion)
+by AccountId
+| extend FailureRate = round(100.0 * Failures / TotalEvents, 1)
+
+// 5b. Fleet health summary
+AWSCloudWatchMetrics
+| where Timestamp > ago(30m)
+| summarize
+    AvgCPU = round(avg(CPUUtilization), 1),
+    MaxCPU = round(max(CPUUtilization), 1),
+    AvgMemory = round(avg(MemoryUsed), 1),
+    AvgGPU = round(avg(GPUUtilization), 1),
+    HighCPUInstances = dcountif(InstanceId, CPUUtilization > 80),
+    FailedChecks = dcountif(InstanceId, StatusCheckFailed > 0),
+    TotalInstances = dcount(InstanceId)
+by AWSRegion
+
+// 5c. Network security posture
+AWSVPCFlowLogs
+| where Timestamp > ago(30m)
+| summarize
+    TotalFlows = count(),
+    Rejected = countif(Action == "REJECT"),
+    SuspiciousPorts = countif(DstPort in (3333, 4444, 8333, 14444, 5555, 9999, 31337)),
+    SSHFlows = countif(DstPort == 22),
+    TotalEgressMB = round(todouble(sumif(Bytes, Direction == "egress")) / 1048576.0, 2)
+by VpcId, AWSRegion
+| extend RejectRate = round(100.0 * Rejected / TotalFlows, 1)
+
+
+// ============================================================
+// 6. ML ANALYTICS — Anomaly Detection & Forecasting
+// ============================================================
+
+// 6a. Time-series anomaly detection on API failure rate
+AWSCloudTrail
+| where Timestamp > ago(6h)
+| summarize Failures = countif(ResponseStatus == "Failure") by bin(Timestamp, 5m)
+| make-series FailureCount = sum(Failures) on Timestamp step 5m
+| extend anomalies = series_decompose_anomalies(FailureCount)
+
+// 6b. Network egress anomaly detection per VPC
+AWSVPCFlowLogs
+| where Timestamp > ago(6h) and Direction == "egress"
+| summarize EgressBytes = sum(Bytes) by bin(Timestamp, 5m), VpcId
+| make-series EgressSeries = sum(EgressBytes) on Timestamp step 5m by VpcId
+| extend anomalies = series_decompose_anomalies(EgressSeries)
+
+// 6c. CPU utilization forecast (next 30 min)
+AWSCloudWatchMetrics
+| where Timestamp > ago(6h)
+| summarize AvgCPU = avg(CPUUtilization) by bin(Timestamp, 5m)
+| make-series CPUSeries = avg(AvgCPU) on Timestamp step 5m
+| extend forecast = series_decompose_forecast(CPUSeries, 6)
+
+// 6d. Auto-clustering of security events
+AWSCloudTrail
+| where Timestamp > ago(1h)
+| where ResponseStatus == "Failure" or EventName in (
+    "AssumeRole","GetSecretValue","AuthorizeSecurityGroupIngress",
+    "ConsoleLogin","AttachRolePolicy"
+)
+| evaluate autocluster()
