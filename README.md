@@ -9,6 +9,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/fabric-Real--Time%20Intelligence-6264A7?style=flat-square&logo=microsoft&logoColor=white" alt="Fabric RTI"/>
   <img src="https://img.shields.io/badge/agents-9%20specialized-blueviolet?style=flat-square" alt="9 Agents"/>
+  <img src="https://img.shields.io/badge/data%20sources-4%20domains-ff6f00?style=flat-square" alt="4 Sources"/>
   <img src="https://img.shields.io/badge/KQL%20queries-30%2B-00BCF2?style=flat-square" alt="KQL Queries"/>
   <img src="https://img.shields.io/badge/dashboard-4%20pages%20%C2%B7%2018%20tiles-brightgreen?style=flat-square" alt="Dashboard"/>
   <img src="https://img.shields.io/badge/python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"/>
@@ -29,10 +30,12 @@
 
 ## 🎯 What Is This?
 
-A company monitors its **Azure infrastructure health** and **employee mobile device fleet** in real-time using **Microsoft Fabric Real-Time Intelligence**. Operations teams get instant visibility into:
+A company monitors its **full operations stack** in real-time using **Microsoft Fabric Real-Time Intelligence**. Operations teams get instant visibility into:
 
 - 🔵 **Azure subscription activity** — deployments, failures, policy changes
 - 📱 **Phone telemetry** — location, battery, app crashes, signal strength
+- ☁️ **AWS multi-cloud security** — CloudTrail, VPC Flow Logs, CloudWatch metrics
+- 📞 **Teams call quality** — network probes, device health, M365 service health
 
 All in one unified platform with **AI-assisted investigation** and **automated alerting**.
 
@@ -56,6 +59,8 @@ python deploy.py
 # 4️⃣ Start simulators
 python phone_simulator.py      # 100 devices × 25 cities
 python activity_simulator.py   # 58 ops × 15 regions
+python aws_simulator.py        # 3 AWS tables via direct Kusto ingestion
+python teams_simulator.py      # Teams call quality + network probes
 
 # 5️⃣ Validate
 python prepare_agents.py --validate   # 28 checks
@@ -71,11 +76,15 @@ flowchart TB
     subgraph Sources["📡 Data Sources"]
         AZ["🔵 Azure Activity Log\n58 ops · 15 regions · 16 callers"]
         PH["📱 Phone Telemetry\n100 devices · 25 cities · 5 models"]
+        AWS["☁️ AWS Multi-Cloud\nCloudTrail · VPC Flow · CloudWatch"]
+        TM["📞 Teams Call Quality\nCalls · Network · Devices · M365"]
     end
 
     subgraph Fabric["⚡ Microsoft Fabric"]
         ES1["🔄 Activity-Stream"]
         ES2["🔄 Phone-Stream"]
+        ES3["🔄 AWS-Stream"]
+        DI["⚡ Direct Kusto Ingestion"]
         EH["🏠 Eventhouse + KQL DB"]
         
         subgraph Medallion["🥇 Medallion Architecture"]
@@ -92,6 +101,8 @@ flowchart TB
 
     AZ --> ES1 --> EH
     PH --> ES2 --> EH
+    AWS --> DI --> EH
+    TM --> ES3 --> EH
     EH --> B --> S --> G
     EH --> QS
     EH --> DB
@@ -121,12 +132,12 @@ flowchart TB
 ```
 1. @infra       → Azure Event Hub + Diagnostic Settings
 2. @eventhouse  → Eventhouse + KQL Database + schema
-3. @eventstream → 2 Eventstreams (Activity + Phone)
+3. @eventstream → 3 Eventstreams (Activity + Phone + AWS)
 4. @queryset    → KQL Queryset with 30 demo queries
 5. @dashboard   → Real-Time Dashboard (4 pages)
 6. @activator   → 4 Activator alert rules
 7. @validator   → Post-deployment health check
-8. @simulator   → Start phone/activity telemetry
+8. @simulator   → Start phone/activity/AWS/Teams telemetry
 ```
 
 </details>
@@ -148,16 +159,28 @@ Inspired by the [GitHub Audit Log Analytics](https://github.com/chakras/github-a
   │ (raw events)   │    │ (update policy)       │    │ gold_AppCrashSummary     │
   └────────────────┘    └───────────────────────┘    │ gold_NetworkQuality      │
                                                      └──────────────────────────┘
+  ┌────────────────┐    ┌───────────────────────┐    ┌──────────────────────────┐
+  │ AWSCloudTrail  │──▶ │ silver_AWSCloudTrail  │──▶ │ gold_AWSSecurityEvents   │
+  │ AWSVPCFlowLogs │──▶ │ silver_AWSVPCFlowLogs │    │ gold_AWSAPIActivity      │
+  │ AWSCloudWatch  │──▶ │ silver_AWSCloudWatch  │    │ gold_AWSNetworkTraffic   │
+  └────────────────┘    └───────────────────────┘    │ gold_AWSInstanceHealth   │
+                                                     └──────────────────────────┘
+  ┌────────────────┐    ┌───────────────────────┐    ┌──────────────────────────┐
+  │TeamsCallQuality│──▶ │ silver_TeamsCallQual   │──▶ │ gold_CallQualityByBldg   │
+  │ NetworkProbe   │──▶ │ silver_NetworkProbe    │    │ gold_NetworkHealthSubnet │
+  │ DeviceHealth   │──▶ │ silver_DeviceHealth    │    │ gold_DeviceHealthOverview│
+  │M365ServiceHlth │    │                       │    │ gold_IssueOriginSummary  │
+  └────────────────┘    └───────────────────────┘    └──────────────────────────┘
 ```
 
 | Layer | Implementation | Purpose |
 |-------|---------------|---------|
-| 🟤 **Bronze** | Raw tables (`AzureActivity`, `PhoneTelemetry`) | Unmodified ingestion |
-| ⚪ **Silver** | Update policies + transform functions | Cleaned, typed, enriched with Region/City |
-| 🟡 **Gold** | Materialized views (5 MVs) | Pre-aggregated for dashboards & alerts |
+| 🟤 **Bronze** | Raw tables (9 tables across 4 domains) | Unmodified ingestion |
+| ⚪ **Silver** | Update policies + transform functions | Cleaned, typed, enriched |
+| 🟡 **Gold** | Materialized views (12+ MVs) | Pre-aggregated for dashboards & alerts |
 
 > [!NOTE]
-> Run `medallion-architecture.kql` after data starts flowing to deploy silver + gold layers.
+> Run `medallion-architecture.kql`, `aws-medallion.kql`, and `teams-medallion.kql` after data starts flowing.
 
 ---
 
@@ -193,6 +216,27 @@ Inspired by the [GitHub Audit Log Analytics](https://github.com/chakras/github-a
 | 👤 Callers | 16 identities |
 | 📦 Resource Groups | 15 groups |
 | ⚡ Rate | ~750 events/min |
+
+### AWS Multi-Cloud Simulator
+| Parameter | Value |
+|-----------|-------|
+| 📋 Tables | AWSCloudTrail, AWSVPCFlowLogs, AWSCloudWatchMetrics |
+| 🏢 Accounts | 3 AWS accounts |
+| 🌍 Regions | 6 AWS regions |
+| 💻 Instances | 20 EC2 instances |
+| 🎭 Anomalies | 4 scenarios (credential stuffing, data exfil, crypto mining, lateral movement) |
+| 🔌 Ingestion | Direct Kusto streaming (CSV format) |
+| ⚡ Rate | ~90 events/batch every 4s |
+
+### Teams Call Quality Simulator
+| Parameter | Value |
+|-----------|-------|
+| 📋 Tables | TeamsCallQuality, NetworkProbe, DeviceHealth, M365ServiceHealth |
+| 🏢 Buildings | 6 (Paris, London, NYC, Seattle, Munich, Singapore) |
+| 👤 Users | 75 across all sites |
+| 🎭 Anomalies | 8 scenarios (thermal throttle, WiFi contention, ISP degradation, VPN mis-config, DNS cascade, driver regression, meeting storm, asymmetric) |
+| 🔌 Ingestion | Eventstream Custom Endpoint (JSON) |
+| ⚡ Rate | ~100 events every 3s |
 
 ---
 
@@ -262,11 +306,22 @@ RTIDemo/
 ├── 🎯 deploy.py                    # Orchestrator — runs all agents
 ├── 📱 phone_simulator.py           # 100-device telemetry simulator
 ├── ⚙️ activity_simulator.py        # Azure activity simulator
+├── ☁️ aws_simulator.py             # AWS multi-cloud simulator (CSV, direct Kusto)
+├── 📞 teams_simulator.py           # Teams call quality simulator (JSON, Eventstream)
 ├── ✅ prepare_agents.py             # Validation tool (28 checks)
 ├── 📋 config.json                  # All settings & item IDs
 ├── 📊 RealTimeDashboard_fixed.json # Dashboard definition (4 pages)
-├── 🥇 medallion-architecture.kql   # Silver + Gold layer definitions
+│
+├── 🥇 medallion-architecture.kql   # Silver + Gold for Azure Activity + Phone
+├── 🥇 aws-medallion.kql            # Silver + Gold for AWS (security analytics)
+├── 🥇 teams-medallion.kql          # Silver + Gold for Teams (call quality)
 ├── 📝 demo-queries.kql             # 30 KQL queries (incl. ML)
+├── 📝 aws-queries.kql              # AWS security analytics queries
+├── 📝 teams-queries.kql            # Teams call quality queries
+├── 📝 aws-schema.kql               # AWS bronze table schemas
+├── 📝 teams-schema.kql             # Teams bronze table schemas
+├── 📝 teams-ontology.kql           # Teams cross-layer ontology
+│
 ├── 🌐 phone-telemetry.html         # Real device telemetry web page
 ├── 🏗️ setup-azure.ps1              # Azure resource setup script
 │
@@ -283,7 +338,8 @@ RTIDemo/
 │
 ├── 📖 README.md                     # This file
 ├── 📖 AGENTS.md                     # Multi-agent architecture docs
-└── 📖 RTI-Demo-Plan.md             # Detailed demo plan
+├── 📖 RTI-Demo-Plan.md             # Detailed demo plan
+└── 📖 ACTIVATOR_SETUP.md           # Activator manual setup guide
 ```
 
 ---

@@ -521,15 +521,24 @@ def main():
             producer.close()
 
 
+CSV_HEADERS = {
+    "AWSCloudTrail": "Timestamp,EventId,EventName,EventSource,AWSRegion,AccountId,UserIdentity,UserAgent,SourceIPAddress,RequestParameters,ResponseStatus,ErrorCode,ErrorMessage,ResourceType,ResourceARN,MFAUsed,ReadOnly",
+    "AWSVPCFlowLogs": "Timestamp,FlowId,AccountId,VpcId,SubnetId,InterfaceId,SrcAddr,DstAddr,SrcPort,DstPort,Protocol,Packets,Bytes,Action,LogStatus,AWSRegion,Direction,TrafficType",
+    "AWSCloudWatchMetrics": "Timestamp,MetricId,AccountId,InstanceId,InstanceType,AWSRegion,AvailabilityZone,CPUUtilization,NetworkIn,NetworkOut,DiskReadOps,DiskWriteOps,MemoryUsed,GPUUtilization,StatusCheckFailed,AutoScalingGroup,Tags",
+}
+
+
 def _eventhub_sender(producer, EventData):
-    """Return a sender function that batches events to Event Hub."""
+    """Return a sender function that batches CSV events to Event Hub."""
     def send(rows, table_name):
         if not rows:
             return
+        header = CSV_HEADERS[table_name]
         batch = producer.create_batch()
         for row in rows:
             csv_row = to_csv_row(row)
-            ed = EventData(csv_row.encode("utf-8"))
+            body = f"{header}\n{csv_row}"
+            ed = EventData(body.encode("utf-8"))
             ed.properties = {"_table": table_name}
             ed.content_type = "text/csv"
             batch.add(ed)

@@ -5,7 +5,7 @@
 
 ## 1. Demo Objective & Story
 
-**Narrative**: A company monitors its Azure infrastructure health and employee mobile device fleet in real-time using Fabric RTI. Operations teams get instant visibility into Azure subscription activity (deployments, failures, policy changes) and phone telemetry (location, battery, app crashes) — all in one unified platform with AI-assisted investigation and automated alerting.
+**Narrative**: A company monitors its full operations stack in real-time using Fabric RTI. Operations teams get instant visibility into Azure subscription activity (deployments, failures, policy changes), phone telemetry (location, battery, app crashes), AWS multi-cloud security (CloudTrail, VPC Flow, CloudWatch), and Teams call quality (network probes, device health) — all in one unified platform with AI-assisted investigation and automated alerting.
 
 **Key RTI capabilities showcased**:
 - Real-Time Hub (centralized catalog of streaming data)
@@ -26,33 +26,23 @@
 │                                  │    │                                  │
 │  Azure Activity Log              │    │  Simulated phone sensors         │
 │  → Diagnostic Settings           │    │  (Python script / Power Automate)│
-│  → Event Hub                     │    │  → Event Hub / Custom Endpoint   │
+│  → Event Hub                     │    │  → Eventstream Custom Endpoint   │
 │                                  │    │                                  │
+└──────────┬───────────────────────┘    └──────────┬───────────────────────┘
+           │                                       │
+┌──────────────────────────────────┐    ┌──────────────────────────────────┐
+│   AWS Multi-Cloud Security       │    │       Teams Call Quality          │
+│                                  │    │                                  │
+│  CloudTrail + VPC Flow + CW      │    │  Call Quality + Network Probes   │
+│  → Direct Kusto ingestion (CSV)  │    │  + Device Health + M365 Health   │
+│                                  │    │  → Eventstream Custom Endpoint   │
 └──────────┬───────────────────────┘    └──────────┬───────────────────────┘
            │                                       │
            ▼                                       ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                    Fabric Real-Time Hub                                  │
-│                (Centralized streaming catalog)                           │
-└──────────────────────────┬───────────────────────────────────────────────┘
-                           │
-                           ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│                        Eventstreams                                      │
-│                                                                          │
-│  ┌─────────────────┐  ┌──────────────┐  ┌────────────────────────────┐  │
-│  │ Azure Sub Stream │  │ Phone Stream │  │ Transformations:           │  │
-│  │ (Event Hub src)  │  │ (Custom EP)  │  │ - Filter / Manage Fields   │  │
-│  │                  │  │              │  │ - Aggregate (5s windows)   │  │
-│  └──────┬───────────┘  └──────┬───────┘  │ - Derived streams          │  │
-│         │                     │          └────────────────────────────┘  │
-└─────────┼─────────────────────┼──────────────────────────────────────────┘
-          │                     │
-          ▼                     ▼
-┌──────────────────────────────────────────────────────────────────────────┐
 │                        Eventhouse                                        │
 │                                                                          │
-│  KQL Database: "RTI-Demo-DB"                                             │
+│  KQL Database: "RTI-Demo-Eventhouse"                                     │
 │  ┌────────────────────────┐  ┌────────────────────────────┐              │
 │  │ Table: AzureActivity   │  │ Table: PhoneTelemetry      │              │
 │  │ - OperationName        │  │ - DeviceId                 │              │
@@ -62,6 +52,13 @@
 │  │ - Level (Error/Info)   │  │ - CrashCount               │              │
 │  │ - Timestamp            │  │ - SignalStrength            │              │
 │  └────────────────────────┘  │ - Timestamp                │              │
+│                              └────────────────────────────┘              │
+│  ┌────────────────────────┐  ┌────────────────────────────┐              │
+│  │ AWS Tables:            │  │ Teams Tables:              │              │
+│  │ - AWSCloudTrail        │  │ - TeamsCallQuality         │              │
+│  │ - AWSVPCFlowLogs       │  │ - NetworkProbe             │              │
+│  │ - AWSCloudWatchMetrics │  │ - DeviceHealth             │              │
+│  └────────────────────────┘  │ - M365ServiceHealth        │              │
 │                              └────────────────────────────┘              │
 └──────────────────┬───────────────────────────────────────────────────────┘
                    │
@@ -91,12 +88,16 @@
 | Item | Name | Purpose |
 |------|------|---------|
 | Eventhouse | `RTI-Demo-Eventhouse` | Analytics engine + storage |
-| KQL Database | `RTI-Demo-DB` | Tables for both data streams |
-| Eventstream #1 | `AzureActivity-Stream` | Ingest Azure Activity Log |
-| Eventstream #2 | `PhoneTelemetry-Stream` | Ingest phone sensor data |
+| KQL Database | `RTI-Demo-Eventhouse` | 9 bronze tables across 4 domains |
+| Eventstream #1 | `Activity-Stream` | Ingest Azure Activity Log |
+| Eventstream #2 | `Phone-Stream` | Ingest phone sensor data |
+| Eventstream #3 | `AWS-Stream` | AWS multi-cloud telemetry (CSV) |
 | KQL Queryset | `RTI-Demo-Queries` | Ad-hoc analysis + Copilot |
 | Real-Time Dashboard | `Operations-Dashboard` | Live monitoring views |
-| Activator | `RTI-Demo-Alerts` | Automated alert rules |
+| Activator | `Demo-Alerts` | Automated alert rules |
+| Data Agent | `RTI-Demo-DataAgent` | Natural language KQL queries |
+| Ops Agent | `RTI-Ops-Agent` | Autonomous operational investigation |
+| Anomaly Detector | `RTI-Anomaly-Detector` | Automatic anomaly detection |
 
 ---
 

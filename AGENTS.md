@@ -112,13 +112,13 @@ Reads `config.json`, authenticates, resolves workspace, and invokes agents in de
 **Pipeline order**:
 1. 🏗️ `@infra` → Azure Event Hub + Diagnostic Settings
 2. 🏠 `@eventhouse` → Eventhouse + KQL Database + schema
-3. 🔄 `@eventstream` → 2 Eventstreams (Azure Activity + Phone)
+3. 🔄 `@eventstream` → 3 Eventstreams (Activity + Phone + AWS)
 4. 📝 `@queryset` → KQL Queryset with demo queries
 5. 📊 `@dashboard` → Real-Time Dashboard with 4 pages
 6. 🚨 `@activator` → 4 Activator alert rules
 7. 🤖 `@ai_agents` → Data Agent + Ops Agent + Anomaly Detector
 8. ✅ `@validator` → Post-deployment health check
-9. 📱 `@simulator` → Start phone telemetry (optional)
+9. 📱 `@simulator` → Start phone/activity/AWS/Teams telemetry (optional)
 
 ---
 
@@ -145,10 +145,14 @@ Reads `config.json`, authenticates, resolves workspace, and invokes agents in de
 
 - `POST /v1/workspaces/{id}/eventhouses` → creates Eventhouse
 - `POST /v1/workspaces/{id}/kqlDatabases` → creates KQL DB with schema
-- Schema includes `AzureActivity` (with `Region`) and `PhoneTelemetry` (with `City`)
-- **Medallion architecture** (`medallion-architecture.kql`):
-  - ⚪ **Silver**: `silver_AzureActivity`, `silver_PhoneTelemetry` — cleaned via update policies
-  - 🟡 **Gold**: 5 materialized views — `gold_AzureOperationsSummary`, `gold_AzureCallerActivity`, `gold_DeviceHealth`, `gold_AppCrashSummary`, `gold_NetworkQuality`
+- Schema: 9 bronze tables across 4 domains:
+  - **Azure**: `AzureActivity`
+  - **Phone**: `PhoneTelemetry`
+  - **AWS**: `AWSCloudTrail`, `AWSVPCFlowLogs`, `AWSCloudWatchMetrics`
+  - **Teams**: `TeamsCallQuality`, `NetworkProbe`, `DeviceHealth`, `M365ServiceHealth`
+- **Medallion architecture** (3 KQL files):
+  - ⚪ **Silver**: 8 cleaned tables via update policies
+  - 🟡 **Gold**: 12+ materialized views across all domains
 
 ---
 
@@ -157,10 +161,12 @@ Reads `config.json`, authenticates, resolves workspace, and invokes agents in de
 | | |
 |---|---|
 | **Module** | `agents/eventstream_agent.py` |
-| **Role** | Creates 2 Eventstreams via Fabric REST API |
+| **Role** | Creates 3 Eventstreams via Fabric REST API |
 
-- `Activity-Stream` → Event Hub `azure-activity` → Eventhouse
-- `Phone-Stream` → Custom Endpoint → Eventhouse
+- `Activity-Stream` → Custom Endpoint → Eventhouse (Azure Activity, JSON)
+- `Phone-Stream` → Custom Endpoint → Eventhouse (Phone Telemetry, JSON)
+- `AWS-Stream` → Custom Endpoint → Eventhouse (CSV with headers, 3 tables via `_table` routing)
+- AWS simulator also supports **direct Kusto ingestion** (`.ingest inline`, no Eventstream)
 - Uses Eventstream definition API to configure sources + destinations
 
 ---
@@ -238,6 +244,8 @@ Reads `config.json`, authenticates, resolves workspace, and invokes agents in de
 |-----------|---------|
 | 📱 **Phone** | `phone_simulator.py` — 100 devices, 25 cities, 5 brands, 50 users, ~2,000 events/min |
 | ⚙️ **Activity** | `activity_simulator.py` — 58 ops, 15 regions, 16 callers, ~750 events/min |
+| ☁️ **AWS** | `aws_simulator.py` — 3 tables, 4 anomaly scenarios, direct Kusto or Eventstream mode |
+| 📞 **Teams** | `teams_simulator.py` — 4 tables, 8 anomaly scenarios, Eventstream Custom Endpoint |
 
 ---
 
@@ -276,10 +284,21 @@ Following the pattern from [github-audit-log-analytics](https://github.com/chakr
   │                │    │ (update policy)       │    │ gold_AppCrashSummary     │
   └────────────────┘    └───────────────────────┘    │ gold_NetworkQuality      │
                                                      └──────────────────────────┘
+  ┌────────────────┐    ┌───────────────────────┐    ┌──────────────────────────┐
+  │ AWSCloudTrail  │──▶ │ silver_AWSCloudTrail  │──▶ │ gold_AWSSecurityEvents   │
+  │ AWSVPCFlowLogs │──▶ │ silver_AWSVPCFlowLogs │    │ gold_AWSAPIActivity      │
+  │ AWSCloudWatch  │──▶ │ silver_AWSCloudWatch  │    │ gold_AWSNetworkTraffic   │
+  └────────────────┘    └───────────────────────┘    └──────────────────────────┘
+  ┌────────────────┐    ┌───────────────────────┐    ┌──────────────────────────┐
+  │TeamsCallQuality│──▶ │ silver_TeamsCallQual   │──▶ │ gold_CallQualityByBldg   │
+  │ NetworkProbe   │──▶ │ silver_NetworkProbe    │    │ gold_NetworkHealthSubnet │
+  │ DeviceHealth   │──▶ │ silver_DeviceHealth    │    │ gold_DeviceHealthOverview│
+  └────────────────┘    └───────────────────────┘    │ gold_IssueOriginSummary  │
+                                                     └──────────────────────────┘
 ```
 
 > [!NOTE]
-> Run `medallion-architecture.kql` in KQL Queryset after data starts flowing.
+> Run `medallion-architecture.kql`, `aws-medallion.kql`, and `teams-medallion.kql` after data starts flowing.
 
 ---
 
